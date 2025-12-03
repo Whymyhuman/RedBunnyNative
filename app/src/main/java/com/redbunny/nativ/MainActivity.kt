@@ -162,28 +162,26 @@ fun MainScreen() {
                     onClick = {
                         scope.launch {
                             isChecking = true
-                            statusMsg = "Checking connectivity and GeoIP..."
-                            // Make a mutable copy to update individual items
-                            val checkedProxies = ProxyChecker.checkProxies(proxies.filter { !it.isChecking })
+                            statusMsg = "Pinging proxies (TCP)..."
                             
-                            // Merge results back into the original list (or just replace if simpler)
-                            val updatedProxies = proxies.map { oldProxy ->
-                                checkedProxies.find { it.ip == oldProxy.ip && it.port == oldProxy.port } ?: oldProxy
-                            }
-                            proxies = updatedProxies
+                            // Check ALL proxies to refresh latency
+                            val checkedProxies = ProxyChecker.checkProxies(proxies)
+                            
+                            // Replace the whole list to force Compose update
+                            proxies = checkedProxies
 
-                            // Filter for working proxies and update selected
-                            val workingProxies = proxies.filter { it.isWorking && it.speedtestAccess }
+                            // Filter for working proxies (latency != -1)
+                            val workingProxies = proxies.filter { it.isWorking }
                             selectedProxies = workingProxies.toSet()
 
-                            statusMsg = "${workingProxies.size} working proxies found"
+                            statusMsg = "Done. ${workingProxies.size} proxies online."
                             isChecking = false
                         }
                     },
                     enabled = proxies.isNotEmpty() && !isLoading && !isChecking,
                     modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
                 ) {
-                    Text(if (isChecking) "Checking..." else "Check Proxies")
+                    Text(if (isChecking) "Pinging..." else "Check Ping")
                 }
 
                 Button(

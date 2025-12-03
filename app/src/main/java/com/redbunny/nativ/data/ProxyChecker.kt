@@ -13,17 +13,13 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.Socket
 import java.util.concurrent.TimeUnit
+import kotlin.system.measureTimeMillis
 
 object ProxyChecker {
 
-    // Batasi 40 pengecekan bersamaan agar tidak OOM atau timeout massal
-    private val semaphore = Semaphore(40) 
-
-    // Target validasi koneksi
-    private const val TARGET_URL = "https://www.speedtest.net"
-    
-    // API GeoIP
+    private val semaphore = Semaphore(50) // Bisa lebih banyak karena TCP ping ringan
     private const val GEO_API_URL = "http://ip-api.com/json" 
 
     suspend fun checkProxies(proxies: List<ProxyItem>): List<ProxyItem> = withContext(Dispatchers.IO) {
@@ -38,72 +34,41 @@ object ProxyChecker {
     }
 
     private fun checkSingleProxy(item: ProxyItem): ProxyItem {
-        // Create a copy to avoid race conditions on UI state if accessed directly
-        val newItem = item.copy(isChecking = true)
+        // Copy item agar thread-safe dan trigger update UI nantinya
+        val newItem = item.copy(isChecking = true, latency = -1, isWorking = false)
 
-        val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(newItem.ip, newItem.port))
-        
-        val client = OkHttpClient.Builder()
-            .proxy(proxy)
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .writeTimeout(5, TimeUnit.SECONDS)
-            .build()
-
-        val start = System.currentTimeMillis()
         try {
-            val request = Request.Builder()
-                .url(TARGET_URL)
-                .header("User-Agent", "Mozilla/5.0 (RedBunnyNative)")
-                .build()
-
-            val response = client.newCall(request).execute()
-            val latency = System.currentTimeMillis() - start
-            
-            response.close()
-
-            if (response.isSuccessful || response.code in 200..399) {
-                newItem.isWorking = true
-                newItem.speedtestAccess = true
-                newItem.latency = latency
-                
-                if (newItem.country == "Unknown") {
-                    fetchGeoInfo(client, newItem)
+            // 1. TCP PING (Cek Latency Dasar)
+            // Ini mengukur seberapa cepat kita bisa connect ke proxy server
+            val time = measureTimeMillis {
+                Socket().use { socket ->
+                    // Timeout 3 detik untuk connect
+                    socket.connect(InetSocketAddress(newItem.ip, newItem.port), 3000)
                 }
-            } else {
-                newItem.isWorking = false
+            }
+            
+            newItem.latency = time
+            newItem.isWorking = true // Bisa connect = Working secara teknis
+            
+            // 2. (Opsional) Cek GeoIP jika belum ada
+            // Kita bisa lakukan ini di background atau pakai HTTP client
+            if (newItem.country == "Unknown") {
+                // fetchGeoInfo(newItem) // Bisa diaktifkan jika perlu, tapi memperlambat
             }
 
         } catch (e: Exception) {
-            newItem.isWorking = false
             newItem.latency = -1
+            newItem.isWorking = false
         } finally {
             newItem.isChecking = false
         }
         
         return newItem
     }
-
-    private fun fetchGeoInfo(client: OkHttpClient, item: ProxyItem) {
-        try {
-            // Note: Reuse client with proxy to check what the outside world sees the IP as
-            val req = Request.Builder().url(GEO_API_URL).build()
-            val resp = client.newCall(req).execute()
-            val body = resp.body?.string()
-            resp.close()
-            
-            if (body != null) {
-                val json = JSONObject(body)
-                if (json.optString("status") == "success") {
-                    val cc = json.optString("countryCode")
-                    val isp = json.optString("isp")
-                    
-                    if (cc.isNotEmpty()) item.country = cc
-                    if (isp.isNotEmpty()) item.provider = isp
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("ProxyChecker", "Geo check failed for ${item.ip}")
-        }
+    
+    // GeoIP check (opsional, dinonaktifkan default agar cepat muncul MS)
+    private fun fetchGeoInfo(item: ProxyItem) {
+       // Implementasi HTTP call biasa tanpa proxy (direct) untuk cek info IP target
+       // Tapi IP API biasanya nge-limit request. Jadi hati-hati.
     }
 }
