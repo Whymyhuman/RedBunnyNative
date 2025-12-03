@@ -30,7 +30,6 @@ import com.redbunny.nativ.data.ConfigGenerator
 import com.redbunny.nativ.data.ProxyChecker
 import com.redbunny.nativ.data.ProxyRepository
 import com.redbunny.nativ.data.ProxyScraper
-import com.redbunny.nativ.data.ProxyChecker
 import com.redbunny.nativ.model.ProxyItem
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
