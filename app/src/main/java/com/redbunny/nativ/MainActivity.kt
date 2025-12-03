@@ -383,7 +383,7 @@ fun ProxyItemCard(proxy: ProxyItem, isSelected: Boolean, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Latency
                 Icon(
-                    Icons.Filled.Speed,
+                    Icons.Filled.PlayArrow,
                     contentDescription = "Latency",
                     tint = Color.Gray,
                     modifier = Modifier.size(16.dp)
