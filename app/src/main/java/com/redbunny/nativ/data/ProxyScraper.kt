@@ -15,146 +15,120 @@ import java.util.concurrent.TimeUnit
 
 object ProxyScraper {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS) // Perpanjang timeout
+        .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
-    // Regex IP yang sangat sederhana (Brute force)
-    private val SIMPLE_IP_REGEX = Regex("""\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b""")
+    // Regex Global: Mencari pola IP dan Port di mana saja dalam teks
+    // Group 1: IP
+    // Group 2: Port (angka 2-5 digit setelah : atau spasi atau koma)
+    private val GLOBAL_REGEX = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[:\s,\t]+(\d{2,5})""")
+
+    // Fallback data jika internet mati total
+    private val FALLBACK_PROXIES = listOf(
+        ProxyItem("1.1.1.1", 80, "US", "Cloudflare (Fallback)", ProxyType.UNKNOWN),
+        ProxyItem("8.8.8.8", 80, "US", "Google (Fallback)", ProxyType.UNKNOWN)
+    )
 
     suspend fun scrapeAll(urls: Set<String>, onProgress: (String) -> Unit): List<ProxyItem> = withContext(Dispatchers.IO) {
-        val deferreds = urls.map {
-            async {
-                // Coba URL asli
-                var items = fetchUrl(it, onProgress)
-
-                // Jika gagal/kosong dan ini adalah link GitHub, coba pakai Mirror (ghproxy)
-                if (items.isEmpty() && it.contains("raw.githubusercontent.com")) {
-                    val mirrorUrl = "https://mirror.ghproxy.com/$it"
-                    onProgress("Retrying with mirror: $mirrorUrl")
-                    items = fetchUrl(mirrorUrl, onProgress)
+        val deferreds = urls.map { url ->
+            async { 
+                var items = fetchUrl(url, onProgress)
+                if (items.isEmpty() && url.contains("githubusercontent")) {
+                    val mirror = url.replace("raw.githubusercontent.com", "mirror.ghproxy.com/https://raw.githubusercontent.com")
+                    onProgress("Retry Mirror: $mirror")
+                    items = fetchUrl(mirror, onProgress)
                 }
                 items
             }
         }
         val results = deferreds.awaitAll()
-        return@withContext results.flatten().distinctBy { "${it.ip}:${it.port}" }
+        val allProxies = results.flatten().distinctBy { "${it.ip}:${it.port}" }
+
+        if (allProxies.isEmpty()) {
+            onProgress("WARNING: No proxies found via network. Using fallback.")
+            return@withContext FALLBACK_PROXIES
+        }
+        
+        return@withContext allProxies
     }
 
     private fun fetchUrl(url: String, onProgress: (String) -> Unit): List<ProxyItem> {
         try {
-            val finalUrl = if (url.contains("?")) "$url&t=${System.currentTimeMillis()}" else "$url?t=${System.currentTimeMillis()}"
-
             val request = Request.Builder()
-                .url(finalUrl)
-                .cacheControl(CacheControl.FORCE_NETWORK)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36") // PENTING!
-                .header("Accept", "*/*")
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .build()
 
             val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                onProgress("Failed ${response.code}: $url")
-                response.close()
-                return emptyList()
-            }
-
             val body = response.body?.string() ?: return emptyList()
             response.close()
 
-            val trimmedBody = body.trim()
-
-            // Deteksi Base64 Murni (tanpa spasi/newline)
-            val content = if (!trimmedBody.contains(" ") && !trimmedBody.contains("\n") && trimmedBody.length > 20) {
-                 decodeBase64(trimmedBody)
+            val decoded = if (isBase64(body)) decodeBase64(body) else body
+            val items = parseContentGlobal(decoded)
+            
+            if (items.isNotEmpty()) {
+                onProgress("OK: $url (+${items.size})")
             } else {
-                 if (isBase64(trimmedBody)) decodeBase64(trimmedBody) else body
+                onProgress("Empty: $url")
             }
-
-            val parsed = parseContent(content)
-            if (parsed.isNotEmpty()) {
-                onProgress("Got ${parsed.size} from $url")
-            } else {
-                onProgress("No proxies found in $url")
-            }
-            return parsed
-
+            return items
         } catch (e: Exception) {
-            onProgress("Error $url: ${e.message}")
+            onProgress("Err: $url (${e.message})")
             return emptyList()
         }
     }
 
-    private fun parseContent(content: String): List<ProxyItem> {
+    private fun parseContentGlobal(content: String): List<ProxyItem> {
         val items = mutableListOf<ProxyItem>()
-        val lines = content.split("\n", "\r")
-
-        // 1. Regex Presisi (IP:Port atau IP,Port)
-        // Menangkap: IP di grup 1, Port di grup 2
-        val preciseRegex = Regex("""\\b(\\d{1,3}\\.{\\d{1,3}}\\.{\\d{1,3}}\\.{\\d{1,3}})\\b[:,\\s]+(\\d{2,5})\\b""")
-
+        
+        // 1. Coba parsing V2Ray Links dulu (vless:// etc)
+        val lines = content.split("\n", " ")
         for (line in lines) {
             val trimmed = line.trim()
-            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("<")) continue
-
-            // VLESS/Trojan Links
-            if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://") || trimmed.startsWith("vmess://")) {
+            if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://")) {
                 parseUri(trimmed)?.let { items.add(it) }
-                continue
             }
+        }
 
-            // Coba Regex Presisi dulu
-            val preciseMatch = preciseRegex.find(trimmed)
-            if (preciseMatch != null) {
-                val ip = preciseMatch.groupValues[1]
-                val port = preciseMatch.groupValues[2].toIntOrNull()
-
-                if (port != null && port in 1..65535) {
+        // 2. Parsing IP:Port menggunakan Global Regex pada SELURUH teks sekaligus
+        // Ini menangani format JSON, CSV, HTML, atau teks acak sekalipun
+        val matches = GLOBAL_REGEX.findAll(content)
+        for (match in matches) {
+            val (ip, portStr) = match.destructured
+            val port = portStr.toIntOrNull()
+            if (port != null && port <= 65535) {
+                // Cek apakah IP valid (0-255)
+                if (isValidIp(ip)) {
                     items.add(ProxyItem(ip, port, "Unknown", "Public", ProxyType.UNKNOWN))
-                    continue // Lanjut ke baris berikutnya jika sudah ketemu
-                }
-            }
-
-            // Fallback: Brute Force IP (Jika format aneh)
-            // Cari IP saja, lalu asumsikan angka berikutnya adalah port jika ada
-            val ipMatches = SIMPLE_IP_REGEX.findAll(trimmed)
-            for (match in ipMatches) {
-                val ip = match.value
-                // Cari angka setelah IP ini
-                val afterIp = trimmed.substring(match.range.last + 1)
-                val portMatch = Regex("\\d{2,5}").find(afterIp)
-                if (portMatch != null) {
-                     val port = portMatch.value.toIntOrNull()
-                     if (port != null) {
-                         items.add(ProxyItem(ip, port, "Unknown", "Public", ProxyType.UNKNOWN))
-                     }
                 }
             }
         }
+        
         return items
     }
 
+    private fun isValidIp(ip: String): Boolean {
+        return ip.split(".").all { it.toIntOrNull() in 0..255 }
+    }
+
     private fun parseUri(uri: String): ProxyItem? {
-        try {
-            val regexUri = Regex("@([^:]+):(\\d+)")
+        return try {
+            val regexUri = Regex("@([^:]+):(\d+)")
             val match = regexUri.find(uri) ?: return null
             val ip = match.groupValues[1]
             val port = match.groupValues[2].toIntOrNull() ?: return null
-
-            val type = when {
-                uri.startsWith("vless://") -> ProxyType.VLESS
-                uri.startsWith("trojan://") -> ProxyType.TROJAN
-                uri.startsWith("vmess://") -> ProxyType.VMESS
-                else -> ProxyType.UNKNOWN
-            }
-            val tag = if (uri.contains("#")) java.net.URLDecoder.decode(uri.substringAfterLast("#"), "UTF-8") else "Imported"
-            return ProxyItem(ip, port, "Unknown", tag, type)
-        } catch (e: Exception) { return null }
+            val type = if (uri.startsWith("vless")) ProxyType.VLESS else ProxyType.TROJAN
+            ProxyItem(ip, port, "Unknown", "Imported", type)
+        } catch (e: Exception) { null }
     }
 
     private fun isBase64(str: String): Boolean {
-        if (str.contains(" ")) return false
-        return try { Base64.decode(str, Base64.DEFAULT); true } catch (e: Exception) { false }
+        val t = str.trim()
+        if (t.contains(" ") || t.length < 20) return false
+        return try { Base64.decode(t, Base64.DEFAULT); true } catch (e: Exception) { false }
     }
 
     private fun decodeBase64(str: String): String {
