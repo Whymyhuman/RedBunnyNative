@@ -143,10 +143,12 @@ fun MainScreen() {
                     onClick = {
                         scope.launch {
                             isLoading = true
-                            statusMsg = "Scraping proxies..."
+                            statusMsg = "Starting scrape..."
                             val sources = ProxyRepository.getSources(context)
-                            proxies = ProxyScraper.scrapeAll(sources)
-                            statusMsg = "Found ${proxies.size} proxies"
+                            proxies = ProxyScraper.scrapeAll(sources) { msg ->
+                                statusMsg = msg // Update status real-time
+                            }
+                            statusMsg = "Done. Found ${proxies.size} proxies."
                             isLoading = false
                         }
                     },
