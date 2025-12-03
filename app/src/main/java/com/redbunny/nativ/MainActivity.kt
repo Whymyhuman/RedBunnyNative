@@ -64,13 +64,33 @@ fun MainScreen() {
     
     var proxies by remember { mutableStateOf<List<ProxyItem>>(emptyList()) }
     var selectedProxies by remember { mutableStateOf<Set<ProxyItem>>(emptySet()) }
-    var isLoading by remember { mutableStateOf(false) } // For scraping
-    var isChecking by remember { mutableStateOf(false) } // For checking connectivity
+    var isLoading by remember { mutableStateOf(false) }
+    var isChecking by remember { mutableStateOf(false) }
     var statusMsg by remember { mutableStateOf("Ready") }
 
     // Settings State
     var frontDomain by remember { mutableStateOf("df.game.naver.com") }
     var sni by remember { mutableStateOf("df.game.naver.com.redbunny.dpdns.org") }
+
+    // Search & Filter State
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Filtered Proxies Logic
+    val filteredProxies by remember(proxies, searchQuery) {
+        derivedStateOf {
+            if (searchQuery.isBlank()) {
+                proxies
+            } else {
+                val query = searchQuery.lowercase()
+                proxies.filter { 
+                    it.ip.contains(query) || 
+                    it.country.lowercase().contains(query) ||
+                    it.provider.lowercase().contains(query) ||
+                    it.port.toString().contains(query)
+                }
+            }
+        }
+    }
 
     // Dialogs State
     var showResultDialog by remember { mutableStateOf(false) }
@@ -91,18 +111,18 @@ fun MainScreen() {
                 }
             )
         }
-    ) {
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .padding(it)
+                .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             // Settings Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF110808)),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Settings Generator", color = Color.Gray, fontSize = 12.sp)
@@ -133,11 +153,10 @@ fun MainScreen() {
                 }
             }
 
-            // Action Buttons
+            // Action Buttons Row
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceAround
             ) {
                 Button(
                     onClick = {
@@ -145,44 +164,29 @@ fun MainScreen() {
                             isLoading = true
                             statusMsg = "Starting scrape..."
                             val sources = ProxyRepository.getSources(context)
-                            proxies = ProxyScraper.scrapeAll(sources) { msg ->
-                                statusMsg = msg // Update status real-time
-                            }
+                            proxies = ProxyScraper.scrapeAll(sources) { msg -> statusMsg = msg }
                             statusMsg = "Done. Found ${proxies.size} proxies."
                             isLoading = false
                         }
                     },
                     enabled = !isLoading && !isChecking,
-                    modifier = Modifier.weight(1f).padding(end = 4.dp)
-                ) {
-                    Text(if (isLoading) "Scraping..." else "Scrape Proxies")
-                }
+                    modifier = Modifier.weight(1f).padding(end = 2.dp)
+                ) { Text(if (isLoading) "..." else "Scrape") }
 
                 Button(
                     onClick = {
                         scope.launch {
                             isChecking = true
                             statusMsg = "Pinging proxies (TCP)..."
-                            
-                            // Check ALL proxies to refresh latency
                             val checkedProxies = ProxyChecker.checkProxies(proxies)
-                            
-                            // Replace the whole list to force Compose update
                             proxies = checkedProxies
-
-                            // Filter for working proxies (latency != -1)
-                            val workingProxies = proxies.filter { it.isWorking }
-                            selectedProxies = workingProxies.toSet()
-
-                            statusMsg = "Done. ${workingProxies.size} proxies online."
+                            statusMsg = "Done. ${proxies.count { it.isWorking }} online."
                             isChecking = false
                         }
                     },
                     enabled = proxies.isNotEmpty() && !isLoading && !isChecking,
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                ) {
-                    Text(if (isChecking) "Pinging..." else "Check Ping")
-                }
+                    modifier = Modifier.weight(1f).padding(horizontal = 2.dp)
+                ) { Text(if (isChecking) "..." else "Check") }
 
                 Button(
                     onClick = {
@@ -192,19 +196,47 @@ fun MainScreen() {
                         }
                         val options = ConfigGenerator.ConfigOptions(frontDomain, sni)
                         val configs = selectedProxies.flatMap { proxy ->
-                            listOf(
-                                ConfigGenerator.generateVless(proxy, options),
-                                ConfigGenerator.generateTrojan(proxy, options)
-                            )
+                            listOf(ConfigGenerator.generateVless(proxy, options), ConfigGenerator.generateTrojan(proxy, options))
                         }.joinToString("\n\n")
-                        
                         generatedConfig = configs
                         showResultDialog = true
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.weight(1f).padding(start = 4.dp)
-                ) {
-                    Text("Generate (${selectedProxies.size})")
+                    modifier = Modifier.weight(1f).padding(start = 2.dp)
+                ) { Text("Gen (${selectedProxies.size})") }
+            }
+
+            // Search & Selection Row
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Search (IP, Country, ISP)") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.Gray) },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                    focusedContainerColor = Color(0xFF1A1A1A),
+                    focusedBorderColor = Color.Gray, unfocusedBorderColor = Color.DarkGray
+                )
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Showing: ${filteredProxies.value.size} / ${proxies.size}",
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+                Row {
+                    TextButton(onClick = { selectedProxies = selectedProxies + filteredProxies.value }) {
+                        Text("Select All")
+                    }
+                    TextButton(onClick = { selectedProxies = emptySet() }) {
+                        Text("Clear", color = Color.Red)
+                    }
                 }
             }
 
@@ -216,21 +248,17 @@ fun MainScreen() {
                  LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
             }
            
-            Text(text = statusMsg, color = Color.White, modifier = Modifier.padding(vertical = 8.dp))
+            Text(text = statusMsg, color = Color.White, modifier = Modifier.padding(vertical = 4.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
 
-            // Proxy List
+            // Proxy List (Filtered)
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                items(proxies, key = { "${it.ip}:${it.port}" }) { proxy ->
+                items(filteredProxies.value, key = { "${it.ip}:${it.port}" }) { proxy ->
                     val isSelected = selectedProxies.contains(proxy)
                     ProxyItemCard(proxy, isSelected) {
-                        selectedProxies = if (isSelected) {
-                            selectedProxies - proxy
-                        } else {
-                            selectedProxies + proxy
-                        }
+                        selectedProxies = if (isSelected) selectedProxies - proxy else selectedProxies + proxy
                     }
                 }
             }
