@@ -403,7 +403,7 @@ fun ProxyItemCard(proxy: ProxyItem, isSelected: Boolean, onClick: () -> Unit) {
 
                 // Speedtest.net Access
                 Icon(
-                    if (proxy.speedtestAccess) Icons.Filled.CheckCircle else Icons.Filled.Cancel,
+                    if (proxy.speedtestAccess) Icons.Filled.CheckCircle else Icons.Filled.Close,
                     contentDescription = "Speedtest Access",
                     tint = if (proxy.speedtestAccess) Color.Green else Color.Red,
                     modifier = Modifier.size(16.dp)
