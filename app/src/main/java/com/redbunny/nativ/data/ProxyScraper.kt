@@ -20,8 +20,8 @@ object ProxyScraper {
         .build()
 
     suspend fun scrapeAll(urls: Set<String>): List<ProxyItem> = withContext(Dispatchers.IO) {
-        val deferreds = urls.map {
-            async { fetchUrl(it) }
+        val deferreds = urls.map { url ->
+            async { fetchUrl(url) }
         }
         val results = deferreds.awaitAll()
         return@withContext results.flatten().distinctBy { "${it.ip}:${it.port}" }
@@ -29,13 +29,13 @@ object ProxyScraper {
 
     private fun fetchUrl(url: String): List<ProxyItem> {
         try {
-            // Anti-Cache: Add timestamp param + Cache-Control header
+            // Anti-Cache: Add timestamp param
             val finalUrl = if (url.contains("?")) "$url&t=${System.currentTimeMillis()}" else "$url?t=${System.currentTimeMillis()}"
             
             Log.d("ProxyScraper", "Fetching: $finalUrl")
             val request = Request.Builder()
                 .url(finalUrl)
-                .cacheControl(CacheControl.FORCE_NETWORK) // Force fetch from network
+                .cacheControl(CacheControl.FORCE_NETWORK)
                 .header("Cache-Control", "no-cache")
                 .build()
 
@@ -44,7 +44,15 @@ object ProxyScraper {
             response.close()
 
             // Try decode if Base64 (common in v2ray subs)
-            val content = if (isBase64(body)) decodeBase64(body) else body
+            // Only try if it looks like a single block of base64 (no spaces, long string)
+            val trimmedBody = body.trim()
+            val content = if (!trimmedBody.contains(" ") && !trimmedBody.contains("\n") && trimmedBody.length > 20) {
+                 decodeBase64(trimmedBody) 
+            } else {
+                 // Some lists are base64 encoded line by line or whole file
+                 if (isBase64(trimmedBody)) decodeBase64(trimmedBody) else body
+            }
+            
             return parseContent(content)
         } catch (e: Exception) {
             Log.e("ProxyScraper", "Error fetching $url: ${e.message}")
@@ -54,15 +62,19 @@ object ProxyScraper {
 
     private fun parseContent(content: String): List<ProxyItem> {
         val items = mutableListOf<ProxyItem>()
-        val lines = content.split("\n", "\r", " ") // Split by space too for some formats
+        // Split ONLY by newlines to preserve context
+        val lines = content.split("\n", "\r") 
         
-        // Regex IP:Port yang fleksibel
-        val regexIp = Regex("\\b(\\d{1,3}\\.{\\d{1,3}}\\.{\\d{1,3}}\\.{\\d{1,3}})\\b")
-        val regexPort = Regex("[:\\s]+(\\d{2,5})\\b")
+        // Regex IP yang kuat
+        val regexIp = Regex("""\\b(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})\\b""")
+        
+        // Regex Port yang menerima : (titik dua), , (koma), atau spasi/tab
+        // Menangkap angka port 2-5 digit
+        val regexPort = Regex("""[:,\\s]+(\\d{2,5})\\b""")
         
         for (line in lines) {
             val trimmed = line.trim()
-            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("//")) continue
+            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("//") || trimmed.startsWith("<")) continue
 
             // 1. Check standard vless:// trojan:// uris
             if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://") || trimmed.startsWith("vmess://")) {
@@ -70,26 +82,34 @@ object ProxyScraper {
                 continue
             }
 
-            // 2. Check IP:Port format
+            // 2. Check IP format
             val matchIp = regexIp.find(trimmed)
             if (matchIp != null) {
                 val ip = matchIp.groupValues[1]
-                // Look for port after IP
+                
+                // Cari port SETELAH posisi IP
+                // Ini menghindari salah deteksi jika ada angka lain sebelum IP
                 val afterIp = trimmed.substring(matchIp.range.last + 1)
                 val matchPort = regexPort.find(afterIp)
                 
                 if (matchPort != null) {
                     val port = matchPort.groupValues[1].toIntOrNull()
+                    
                     if (port != null && port in 1..65535) {
-                        items.add(ProxyItem(ip, port, "Unknown", "Public", ProxyType.UNKNOWN))
+                        // Coba ekstrak info tambahan (Country/Provider) jika format CSV
+                        // Contoh: IP,Port,Country,Provider
+                        var country = "Unknown"
+                        var provider = "Public"
+                        
+                        val parts = trimmed.split(",")
+                        if (parts.size >= 3) {
+                            // Asumsi sederhana: bagian 2 huruf besar adalah kode negara
+                            val potentialCountry = parts.find { it.trim().length == 2 && it.trim().all { c -> c.isUpperCase() } && it.trim() != "IP" }
+                            if (potentialCountry != null) country = potentialCountry
+                        }
+
+                        items.add(ProxyItem(ip, port, country, provider, ProxyType.UNKNOWN))
                     }
-                } else if (trimmed.contains(":")) {
-                     // Simple split fallback
-                     val parts = trimmed.split(":")
-                     if (parts.size >= 2) {
-                         val p = parts[1].filter { it.isDigit() }.toIntOrNull()
-                         if (p != null) items.add(ProxyItem(ip, p, "Unknown", "Public", ProxyType.UNKNOWN))
-                     }
                 }
             }
         }
@@ -98,9 +118,7 @@ object ProxyScraper {
 
     private fun parseUri(uri: String): ProxyItem? {
         try {
-            // Basic parsing for vless/trojan to extract IP and Port
-            // vless://uuid@ip:port?...
-            val regexUri = Regex("@([^:]+):(\\d+)")
+            val regexUri = Regex("""@([^:]+):(\\d+)"""")
             val match = regexUri.find(uri) ?: return null
             val ip = match.groupValues[1]
             val port = match.groupValues[2].toIntOrNull() ?: return null
@@ -112,7 +130,6 @@ object ProxyScraper {
                 else -> ProxyType.UNKNOWN
             }
             
-            // Extract name if possible (after #)
             val tag = if (uri.contains("#")) java.net.URLDecoder.decode(uri.substringAfterLast("#"), "UTF-8") else "Imported"
             
             return ProxyItem(ip, port, "Unknown", tag, type)
@@ -122,11 +139,10 @@ object ProxyScraper {
     }
 
     private fun isBase64(str: String): Boolean {
-        val trimmed = str.trim()
-        // Basic check: no spaces, length multiple of 4 (with padding), only base64 chars
-        if (trimmed.contains(" ") || trimmed.length < 20) return false
+        // Basic check to prevent crashing on normal text
+        if (str.contains(" ")) return false
         return try {
-            Base64.decode(trimmed, Base64.DEFAULT)
+            Base64.decode(str, Base64.DEFAULT)
             true
         } catch (e: Exception) {
             false
