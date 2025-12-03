@@ -1,5 +1,6 @@
 package com.redbunny.nativ.data
 
+import android.util.Log
 import com.redbunny.nativ.model.ProxyItem
 import com.redbunny.nativ.model.ProxyType
 import kotlinx.coroutines.Dispatchers
@@ -9,25 +10,15 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
-import android.util.Log
 
 object ProxyScraper {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    // List of raw text proxy sources
-    private val SOURCES = listOf(
-        "https://raw.githubusercontent.com/mrzero0nol/My-v2ray/main/proxyList.txt", // Original source
-        "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt", // Generic SOCKS5 (often adaptable)
-        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-        // Add more reliable raw lists here. Many vless lists are base64 encoded configs, 
-        // but for now we stick to IP:Port scraping as requested by the "Original" logic.
-    )
-
-    suspend fun scrapeAll(): List<ProxyItem> = withContext(Dispatchers.IO) {
-        val deferreds = SOURCES.map { url ->
+    suspend fun scrapeAll(urls: Set<String>): List<ProxyItem> = withContext(Dispatchers.IO) {
+        val deferreds = urls.map { url ->
             async { fetchUrl(url) }
         }
         val results = deferreds.awaitAll()
@@ -36,6 +27,7 @@ object ProxyScraper {
 
     private fun fetchUrl(url: String): List<ProxyItem> {
         try {
+            Log.d("ProxyScraper", "Fetching: $url")
             val request = Request.Builder().url(url).build()
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: return emptyList()
@@ -51,27 +43,34 @@ object ProxyScraper {
         val items = mutableListOf<ProxyItem>()
         val lines = content.split("\n")
         
+        // Regex IP:Port yang fleksibel
+        val regex = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[:\s]+(\d+)""")
+        
         for (line in lines) {
             val trimmed = line.trim()
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
+            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("//")) continue
 
-            // Attempt to parse standard IP:Port format
-            // Regex for IP:Port
-            val match = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)""").find(trimmed)
+            // Coba parsing
+            val match = regex.find(trimmed)
             
             if (match != null) {
                 val (ip, portStr) = match.destructured
                 val port = portStr.toIntOrNull()
                 
                 if (port != null && port in 1..65535) {
-                    // Try to extract country if available (comma separated)
-                    val parts = trimmed.split(",")
+                    // Deteksi Country jika ada di baris tersebut (format CSV umum)
+                    // Contoh: 1.1.1.1:80,US,Cloudflare
+                    val parts = trimmed.split(",", " ", "\t", ";")
                     var country = "Unknown"
                     var provider = "Public"
                     
-                    if (parts.size >= 3) {
-                        country = parts[2].trim().uppercase()
-                        if (parts.size >= 4) provider = parts.subList(3, parts.size).joinToString(" ")
+                    // Logika sederhana menebak posisi country (biasanya 2 huruf besar)
+                    for (part in parts) {
+                        val p = part.trim()
+                        if (p.length == 2 && p.all { it.isUpperCase() } && p != "IP" && p != "OK") {
+                            country = p
+                            break
+                        }
                     }
 
                     items.add(ProxyItem(ip, port, country, provider, ProxyType.UNKNOWN))
