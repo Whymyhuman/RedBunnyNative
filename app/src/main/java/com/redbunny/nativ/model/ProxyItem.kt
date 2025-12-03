@@ -1,4 +1,4 @@
-package com.redbunny.native.model
+package com.redbunny.nativ.model
 
 data class ProxyItem(
     val ip: String,

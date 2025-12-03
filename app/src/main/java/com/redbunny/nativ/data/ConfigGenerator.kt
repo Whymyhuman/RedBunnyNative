@@ -1,6 +1,6 @@
-package com.redbunny.native.data
+package com.redbunny.nativ.data
 
-import com.redbunny.native.model.ProxyItem
+import com.redbunny.nativ.model.ProxyItem
 import java.util.UUID
 
 object ConfigGenerator {

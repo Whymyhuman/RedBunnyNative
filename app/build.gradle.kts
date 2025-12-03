@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.redbunny.native"
+    namespace = "com.redbunny.nativ"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.redbunny.native"
+        applicationId = "com.redbunny.nativ"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

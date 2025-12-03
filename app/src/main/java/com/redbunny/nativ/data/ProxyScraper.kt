@@ -1,7 +1,7 @@
-package com.redbunny.native.data
+package com.redbunny.nativ.data
 
-import com.redbunny.native.model.ProxyItem
-import com.redbunny.native.model.ProxyType
+import com.redbunny.nativ.model.ProxyItem
+import com.redbunny.nativ.model.ProxyType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll

@@ -1,4 +1,4 @@
-package com.redbunny.native
+package com.redbunny.nativ
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -19,9 +19,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.redbunny.native.data.ConfigGenerator
-import com.redbunny.native.data.ProxyScraper
-import com.redbunny.native.model.ProxyItem
+import com.redbunny.nativ.data.ConfigGenerator
+import com.redbunny.nativ.data.ProxyScraper
+import com.redbunny.nativ.model.ProxyItem
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
