@@ -226,12 +226,12 @@ fun MainScreen() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Showing: ${filteredProxies.value.size} / ${proxies.size}",
+                    text = "Showing: ${filteredProxies.size} / ${proxies.size}",
                     color = Color.Gray,
                     fontSize = 12.sp
                 )
                 Row {
-                    TextButton(onClick = { selectedProxies = selectedProxies + filteredProxies.value }) {
+                    TextButton(onClick = { selectedProxies = selectedProxies + filteredProxies }) {
                         Text("Select All")
                     }
                     TextButton(onClick = { selectedProxies = emptySet() }) {
@@ -255,7 +255,7 @@ fun MainScreen() {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                items(filteredProxies.value, key = { "${it.ip}:${it.port}" }) { proxy ->
+                items(filteredProxies, key = { "${it.ip}:${it.port}" }) { proxy ->
                     val isSelected = selectedProxies.contains(proxy)
                     ProxyItemCard(proxy, isSelected) {
                         selectedProxies = if (isSelected) selectedProxies - proxy else selectedProxies + proxy
