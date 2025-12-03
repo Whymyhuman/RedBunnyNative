@@ -116,7 +116,7 @@ object ProxyScraper {
 
     private fun parseUri(uri: String): ProxyItem? {
         return try {
-            val regexUri = Regex("@([^:]+):(\d+)")
+            val regexUri = Regex("""@([^:]+):(\d+)""")
             val match = regexUri.find(uri) ?: return null
             val ip = match.groupValues[1]
             val port = match.groupValues[2].toIntOrNull() ?: return null
