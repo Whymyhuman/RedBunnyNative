@@ -50,10 +50,10 @@ object ProxyChecker {
             newItem.latency = time
             newItem.isWorking = true // Bisa connect = Working secara teknis
             
-            // 2. (Opsional) Cek GeoIP jika belum ada
-            // Kita bisa lakukan ini di background atau pakai HTTP client
-            if (newItem.country == "Unknown") {
-                // fetchGeoInfo(newItem) // Bisa diaktifkan jika perlu, tapi memperlambat
+            // 2. Cek GeoIP jika Ping Sukses
+            // Kita lakukan request HTTP biasa ke ip-api.com untuk mendapatkan info IP proxy
+            if (newItem.isWorking) {
+                fetchGeoInfo(newItem)
             }
 
         } catch (e: Exception) {
@@ -68,7 +68,33 @@ object ProxyChecker {
     
     // GeoIP check (opsional, dinonaktifkan default agar cepat muncul MS)
     private fun fetchGeoInfo(item: ProxyItem) {
-       // Implementasi HTTP call biasa tanpa proxy (direct) untuk cek info IP target
-       // Tapi IP API biasanya nge-limit request. Jadi hati-hati.
+        try {
+            // Gunakan client baru tanpa proxy untuk cek info IP target secara direct
+            // URL: http://ip-api.com/json/{IP_TARGET}
+            val client = OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(5, TimeUnit.SECONDS)
+                .build()
+                
+            val req = Request.Builder().url("http://ip-api.com/json/${item.ip}").build()
+            val resp = client.newCall(req).execute()
+            val body = resp.body?.string()
+            resp.close()
+            
+            if (body != null) {
+                val json = JSONObject(body)
+                if (json.optString("status") == "success") {
+                    val cc = json.optString("countryCode")
+                    val isp = json.optString("isp")
+                    val org = json.optString("org") // Kadang org lebih deskriptif drpd isp
+                    
+                    if (cc.isNotEmpty()) item.country = cc
+                    // Prioritaskan ISP, kalau kosong pakai Org
+                    if (isp.isNotEmpty()) item.provider = isp else if (org.isNotEmpty()) item.provider = org
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("ProxyChecker", "Geo check failed for ${item.ip}")
+        }
     }
 }
