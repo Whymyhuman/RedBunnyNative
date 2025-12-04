@@ -25,7 +25,7 @@ jobs:
       run: ./gradlew assembleRelease
 
     - name: Sign app bundle
-      uses: ilharp/sign-android-release-action@v1
+      uses: ilharp/sign-android-release@v1
       id: sign_app
       with:
         releaseDirectory: app/build/outputs/apk/release
