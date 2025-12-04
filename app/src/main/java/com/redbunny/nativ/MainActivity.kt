@@ -177,10 +177,19 @@ fun MainScreen() {
                     onClick = {
                         scope.launch {
                             isChecking = true
-                            statusMsg = "Pinging proxies (TCP)..."
-                            val checkedProxies = ProxyChecker.checkProxies(proxies)
-                            proxies = checkedProxies
-                            statusMsg = "Done. ${proxies.count { it.isWorking }} online."
+                            statusMsg = "Pinging ${filteredProxies.size} visible proxies..."
+                            
+                            // 1. Check only the filtered proxies
+                            val checkedPart = ProxyChecker.checkProxies(filteredProxies)
+                            
+                            // 2. Update the main list with the results
+                            // This ensures that even if the user clears search, the latency is saved
+                            val checkedMap = checkedPart.associateBy { "${it.ip}:${it.port}" }
+                            proxies = proxies.map { originalProxy ->
+                                checkedMap["${originalProxy.ip}:${originalProxy.port}"] ?: originalProxy
+                            }
+
+                            statusMsg = "Done. ${checkedPart.count { it.isWorking }} of ${filteredProxies.size} online."
                             isChecking = false
                         }
                     },
