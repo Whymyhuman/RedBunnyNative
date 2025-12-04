@@ -1,9 +1,12 @@
-name: Build Signed Release APK
+name: Build & Release APK
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -39,8 +42,25 @@ jobs:
         SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         SIGNING_STORE_FILE: ${{ github.workspace }}/release.keystore
 
-    - name: Upload Signed APK
-      uses: actions/upload-artifact@v4
+    - name: Rename APK
+      run: |
+        mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/RedBunnyNative-v1.0.${{ github.run_number }}.apk
+
+    - name: Create Release & Upload APK
+      uses: softprops/action-gh-release@v1
+      if: success()
       with:
-        name: RedBunnyNative-Signed
-        path: app/build/outputs/apk/release/app-release.apk
+        tag_name: v1.0.${{ github.run_number }}
+        name: RedBunny Native v1.0.${{ github.run_number }}
+        body: |
+          🚀 **Auto-generated Release**
+          
+          Build Number: `${{ github.run_number }}`
+          Commit: `${{ github.sha }}`
+          
+          **Fitur Terbaru:**
+          - Auto Scrape & Check
+          - TCP Ping Latency
+          - GeoIP & ISP Detection
+        files: app/build/outputs/apk/release/RedBunnyNative-v1.0.${{ github.run_number }}.apk
+        token: ${{ secrets.GITHUB_TOKEN }}
