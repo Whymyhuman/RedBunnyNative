@@ -22,10 +22,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("release.keystore")
-            storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: "android"
-            keyAlias = System.getenv("SIGNING_KEY_ALIAS") ?: "android"
-            keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: "android"
+            keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+            keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            storeFile = System.getenv("SIGNING_STORE_FILE")?.let { file(it) } ?: file("../release.keystore")
+            storePassword = System.getenv("SIGNING_STORE_PASSWORD")
         }
     }
 
