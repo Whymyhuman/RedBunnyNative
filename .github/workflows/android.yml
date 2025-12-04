@@ -31,25 +31,16 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Assemble Release APK
+    - name: Assemble Release APK (Signed by Gradle)
       run: ./gradlew assembleRelease
       env:
         SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-
-    - name: Sign APK
-      id: sign_apk
-      uses: r0adkll/sign-android-release@v1
-      with:
-        releaseDirectory: app/build/outputs/apk/release
-        signingKeyBase64: ${{ secrets.KEYSTORE }}
-        alias: ${{ secrets.KEY_ALIAS }}
-        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-        keyPassword: ${{ secrets.KEY_PASSWORD }}
+        SIGNING_STORE_FILE: ${{ github.workspace }}/release.keystore
 
     - name: Upload Signed APK
       uses: actions/upload-artifact@v4
       with:
         name: RedBunnyNative-Signed
-        path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+        path: app/build/outputs/apk/release/app-release.apk
