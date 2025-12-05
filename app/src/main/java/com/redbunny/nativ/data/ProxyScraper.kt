@@ -13,30 +13,22 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import java.net.URLDecoder
 
 object ProxyScraper {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS) // Lebih lama lagi
+        .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
 
-    // Regex Global Sederhana: IP:Port
-    private val GLOBAL_REGEX = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})""")
-
-    private val FALLBACK_PROXIES = listOf(
-        ProxyItem("1.1.1.1", 80, "US", "Cloudflare (Fallback)", ProxyType.UNKNOWN),
-        ProxyItem("8.8.8.8", 80, "US", "Google (Fallback)", ProxyType.UNKNOWN)
-    )
-
     suspend fun scrapeAll(urls: Set<String>, onProgress: (String) -> Unit): List<ProxyItem> = withContext(Dispatchers.IO) {
         val deferreds = urls.map {
             async {
                 var items = fetchUrl(it, onProgress)
-                // Jika gagal dan URL adalah GitHub API, coba raw sebagai fallback (kebalikan dari sebelumnya)
                 if (items.isEmpty() && it.contains("api.github.com")) {
-                    val rawUrl = "https://raw.githubusercontent.com/Whymyhuman/RedBunnyNative/main/all_proxies.txt"
+                    val rawUrl = "https://raw.githubusercontent.com/Whymyhuman/RedBunnyNative/main/active_proxies.txt"
                     onProgress("API Failed. Trying Raw: $rawUrl")
                     items = fetchUrl(rawUrl, onProgress)
                 }
@@ -44,22 +36,15 @@ object ProxyScraper {
             }
         }
         val results = deferreds.awaitAll()
-        val allProxies = results.flatten().distinctBy { "${it.ip}:${it.port}" }
-
-        if (allProxies.isEmpty()) {
-            onProgress("CRITICAL: All sources failed. Check internet connection.")
-            return@withContext FALLBACK_PROXIES
-        }
-        
-        return@withContext allProxies
+        // Distinct by IP:Port to avoid duplicates
+        return@withContext results.flatten().distinctBy { "${it.ip}:${it.port}" }
     }
 
     private fun fetchUrl(url: String, onProgress: (String) -> Unit): List<ProxyItem> {
         try {
-            // Add cache buster for raw urls, API urls ignore it mostly but fine
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "RedBunnyNative/1.0") // Simple UA
+                .header("User-Agent", "RedBunnyNative/1.0")
                 .header("Accept", "application/vnd.github.v3+json, text/plain") 
                 .build()
 
@@ -68,43 +53,28 @@ object ProxyScraper {
             response.close()
 
             if (!response.isSuccessful || responseBody == null) {
-                onProgress("Err ${response.code}: $url")
                 return emptyList()
             }
 
             var content = responseBody!!
 
-            // 1. Cek apakah ini respon JSON dari GitHub API?
             if (responseBody.trim().startsWith("{") && url.contains("api.github.com")) {
                 try {
                     val json = JSONObject(responseBody)
-                    // GitHub API returns content in Base64 with newlines
                     val encodedContent = json.optString("content").replace("\n", "")
                     if (encodedContent.isNotEmpty()) {
                         content = String(Base64.decode(encodedContent, Base64.DEFAULT))
-                        onProgress("Decoded GitHub API response")
                     }
-                } catch (e: Exception) {
-                    onProgress("JSON Parse Error: ${e.message}")
-                }
-            } 
-            // 2. Cek Base64 biasa (Raw file)
-            else if (isBase64(content.trim())) {
+                } catch (e: Exception) { }
+            } else if (isBase64(content.trim())) {
                 content = decodeBase64(content.trim())
             }
 
             val items = parseContentGlobal(content)
-            
-            if (items.isNotEmpty()) {
-                onProgress("Success: Retrieved ${items.size} proxies")
-            } else {
-                onProgress("Zero proxies found in content")
-            }
+            if (items.isNotEmpty()) onProgress("Found ${items.size} proxies")
             return items
 
         } catch (e: Exception) {
-            onProgress("Exception: ${e.message}")
-            Log.e("ProxyScraper", "Fetch error", e)
             return emptyList()
         }
     }
@@ -117,32 +87,95 @@ object ProxyScraper {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) continue
             
-            // Format sederhana: IP:Port
-            // Kita cari titik dua terakhir untuk memisahkan IP dan Port
-            val lastColon = trimmed.lastIndexOf(':')
-            if (lastColon != -1 && lastColon < trimmed.length - 1) {
-                val ipPart = trimmed.substring(0, lastColon).trim()
-                val portPart = trimmed.substring(lastColon + 1).trim()
-                
-                // Validasi Port angka
-                val port = portPart.toIntOrNull()
-                if (port != null && port in 1..65535) {
-                    // Validasi IP sederhana (harus ada titik)
-                    if (ipPart.contains(".")) {
-                         items.add(ProxyItem(ipPart, port, "Unknown", "Public", ProxyType.UNKNOWN))
-                    }
-                }
+            if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://")) {
+                parseVlessTrojan(trimmed)?.let { items.add(it) }
+            } else if (trimmed.startsWith("vmess://")) {
+                // VMess parsing if needed, currently skipping for simplicity or add logic
             }
         }
         return items
     }
 
-    private fun isValidIp(ip: String): Boolean {
-        return ip.split(".").all { it.toIntOrNull() in 0..255 }
+    private fun parseVlessTrojan(uri: String): ProxyItem? {
+        try {
+            // vless://uuid@ip:port?params#name
+            val type = if (uri.startsWith("vless")) ProxyType.VLESS else ProxyType.TROJAN
+            
+            val main = uri.substringAfter("://")
+            if ("@" !in main) return null
+            
+            val uuid = main.substringBefore("@")
+            val rest = main.substringAfter("@")
+            
+            var addressPart = rest
+            var paramsPart = ""
+            var name = ""
+            
+            if ("#" in rest) {
+                name = rest.substringAfter("#")
+                addressPart = rest.substringBefore("#")
+            }
+            
+            if ("?" in addressPart) {
+                paramsPart = addressPart.substringAfter("?")
+                addressPart = addressPart.substringBefore("?")
+            }
+            
+            val ip = addressPart.substringBeforeLast(":")
+            val port = addressPart.substringAfterLast(":").toIntOrNull() ?: 443
+            
+            // Parse Query Params for Host/SNI
+            var originalHost = ""
+            if (paramsPart.isNotEmpty()) {
+                val pairs = paramsPart.split("&")
+                for (pair in pairs) {
+                    val kv = pair.split("=")
+                    if (kv.size == 2) {
+                        val key = kv[0]
+                        val value = URLDecoder.decode(kv[1], "UTF-8")
+                        if (key == "host" || key == "sni") {
+                            originalHost = value // Prioritize host/sni found in params
+                        }
+                    }
+                }
+            }
+            
+            // If no host in params, use IP/Domain from address
+            if (originalHost.isEmpty()) originalHost = ip
+            
+            // Parse Name for Country/ISP
+            var country = "Unknown"
+            var provider = "Public"
+            
+            if (name.isNotEmpty()) {
+                val decodedName = URLDecoder.decode(name, "UTF-8")
+                // Format: #ID Telkomsel [IP]
+                // Try to extract if matches our aggregator format
+                if (decodedName.contains(" ")) {
+                    val parts = decodedName.split(" ")
+                    if (parts.isNotEmpty()) country = parts[0]
+                    if (parts.size > 1) provider = parts.subList(1, parts.size).joinToString(" ")
+                } else {
+                    provider = decodedName
+                }
+            }
+
+            return ProxyItem(
+                ip = ip,
+                port = port,
+                country = country,
+                provider = provider,
+                type = type,
+                uuid = uuid,
+                originalHost = originalHost
+            )
+        } catch (e: Exception) {
+            return null
+        }
     }
 
     private fun isBase64(str: String): Boolean {
-        if (str.contains(" ") || str.length < 20) return false
+        if (str.contains(" ")) return false
         return try { Base64.decode(str, Base64.DEFAULT); true } catch (e: Exception) { false }
     }
 

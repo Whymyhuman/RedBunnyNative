@@ -1,36 +1,45 @@
 package com.redbunny.nativ.data
 
 import com.redbunny.nativ.model.ProxyItem
-import java.util.UUID
+import com.redbunny.nativ.model.ProxyType
+import java.net.URLEncoder
 
 object ConfigGenerator {
 
     data class ConfigOptions(
-        val frontDomain: String = "df.game.naver.com",
-        val sni: String = "df.game.naver.com.redbunny.dpdns.org",
-        val tlsPort: Int = 443,
-        val hostHeader: String = ""
+        val frontDomain: String = "media-sin6-3.cdn.whatsapp.net", // Default Bug
+        val sni: String = "" // Tidak dipakai langsung, kita generate format Onering
     )
 
     fun generateVless(proxy: ProxyItem, options: ConfigOptions): String {
-        val uuid = UUID.randomUUID().toString()
-        val host = if (options.hostHeader.isNotEmpty()) options.hostHeader else options.sni
-        val tag = "${proxy.country} ${proxy.provider} [${proxy.ip}]"
+        // Format Onering SNI: onering:SERVER_HOST:BUG_HOST
+        // Host asli proxy (IP atau Domain)
+        val serverHost = proxy.ip 
+        val oneringSni = "onering:$serverHost:${options.frontDomain}"
         
-        // Standard VLESS WS TLS format
-        return "vless://$uuid@${options.frontDomain}:${options.tlsPort}/?type=ws&encryption=none&flow=&host=$host&path=/${proxy.ip}-${proxy.port}&security=tls&sni=${options.sni}#${encode(tag)}"
+        val tag = "${proxy.country} ${proxy.provider}"
+        
+        // Standard VLESS WS TLS format dengan SNI Onering
+        return "vless://${proxy.uuid}@${proxy.ip}:${proxy.port}?type=ws&encryption=none&security=tls&sni=$oneringSni&host=$serverHost&path=%2F#${encode(tag)}"
     }
 
     fun generateTrojan(proxy: ProxyItem, options: ConfigOptions): String {
-        val password = UUID.randomUUID().toString()
-        val host = if (options.hostHeader.isNotEmpty()) options.hostHeader else options.sni
-        val tag = "${proxy.country} ${proxy.provider} [${proxy.ip}]"
+        val serverHost = proxy.ip
+        val oneringSni = "onering:$serverHost:${options.frontDomain}"
+        val tag = "${proxy.country} ${proxy.provider}"
 
-        // Standard Trojan WS TLS format
-        return "trojan://$password@${options.frontDomain}:${options.tlsPort}/?type=ws&host=$host&path=/${proxy.ip}-${proxy.port}&security=tls&sni=${options.sni}#${encode(tag)}"
+        return "trojan://${proxy.uuid}@${proxy.ip}:${proxy.port}?type=ws&security=tls&sni=$oneringSni&host=$serverHost&path=%2F#${encode(tag)}"
+    }
+    
+    fun generateVmess(proxy: ProxyItem, options: ConfigOptions): String {
+        // VMess butuh JSON construction
+        // Maaf, untuk VMess agak kompleks di Kotlin tanpa library JSON full, 
+        // tapi kita bisa construct string JSON manual atau skip dulu.
+        // Fokus VLESS/Trojan dulu sesuai request utama.
+        return ""
     }
 
     private fun encode(s: String): String {
-        return java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+        return URLEncoder.encode(s, "UTF-8").replace("+", "%20")
     }
 }

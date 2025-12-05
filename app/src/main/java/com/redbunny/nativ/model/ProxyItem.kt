@@ -6,6 +6,8 @@ data class ProxyItem(
     var country: String = "Unknown",
     var provider: String = "Unknown",
     var type: ProxyType = ProxyType.UNKNOWN,
+    var uuid: String = "", // Untuk VLESS/Trojan/VMess
+    var originalHost: String = "", // Host asli dari config, bukan IP
     
     // Status Pengecekan
     var latency: Long = -1, // -1 berarti belum dicek atau timeout
