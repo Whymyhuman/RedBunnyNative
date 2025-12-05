@@ -2,7 +2,7 @@ name: Proxy Aggregator & Checker
 
 on:
   schedule:
-    - cron: '0 */1 * * *' # Run every hour
+    - cron: '0,25,50 * * * *' # Run at minute 0, 25, and 50 of every hour
   workflow_dispatch:      # Allow manual trigger
 
 permissions:
