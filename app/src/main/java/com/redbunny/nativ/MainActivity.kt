@@ -182,11 +182,13 @@ fun MainScreen() {
                             // 1. Check only the filtered proxies
                             val checkedPart = ProxyChecker.checkProxies(filteredProxies)
                             
-                            // 2. Update the main list with the results
-                            // This ensures that even if the user clears search, the latency is saved
+                            // 2. Update the main list with the results AND SORT
+                            // Sort order: Working (lowest latency) -> Not working / Untested
                             val checkedMap = checkedPart.associateBy { "${it.ip}:${it.port}" }
                             proxies = proxies.map { originalProxy ->
                                 checkedMap["${originalProxy.ip}:${originalProxy.port}"] ?: originalProxy
+                            }.sortedBy { 
+                                if (it.latency == -1L) Long.MAX_VALUE else it.latency 
                             }
 
                             statusMsg = "Done. ${checkedPart.count { it.isWorking }} of ${filteredProxies.size} online."
