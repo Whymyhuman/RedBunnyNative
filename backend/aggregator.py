@@ -12,7 +12,32 @@ import random
 
 # --- SUMBER V2RAY (VLESS/VMess/Trojan) ---
 SOURCES = [
+    # --- KOLEKTOR POPULER (Update Tiap Jam) ---
+    "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vless",
+    "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vmess",
+    "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/trojan",
+    "https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/server.txt",
+    "https://raw.githubusercontent.com/soroushmirza5/telegram-configs-collector/main/protocols/vless",
+    "https://raw.githubusercontent.com/soroushmirza5/telegram-configs-collector/main/protocols/vmess",
+    "https://raw.githubusercontent.com/soroushmirza5/telegram-configs-collector/main/protocols/trojan",
+    "https://raw.githubusercontent.com/AzadNetCH/Clash/main/V2Ray/V2Ray-64.txt",
+    "https://raw.githubusercontent.com/ts-sf/fly/main/v2",
+    "https://raw.githubusercontent.com/mkb2023/One-Click-Proxy/main/v2ray.txt",
+    
+    # --- SUMBER LAMA (Tapi Masih Bagus) ---
     "https://raw.githubusercontent.com/mrzero0nol/My-v2ray/main/proxyList.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/master/Vless",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/master/Vmess",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/master/Trojan",
+    "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Sub/Vless",
+    "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Sub/Vmess",
+    "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Sub/Trojan",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/vless.txt",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/vmess.txt",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/trojan.txt",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/vless",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/vmess",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/trojan",
     "https://raw.githubusercontent.com/freefq/free/master/vless.txt",
     "https://raw.githubusercontent.com/freefq/free/master/vmess.txt",
     "https://raw.githubusercontent.com/rostergamer/v2ray/master/vless",
@@ -26,7 +51,7 @@ SOURCES = [
     "https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/v2ray"
 ]
 
-# Target Check: Speedtest API (Cepat & Akurat)
+# Target Check: Speedtest API
 TARGET_URL = "https://www.speedtest.net/api/js/servers?engine=js"
 XRAY_BIN = "backend/xray_bin/xray"
 LOCAL_PORT_START = 10000
@@ -36,7 +61,11 @@ def try_decode(text):
     if not text: return ""
     if "://" in text: return text
     try: return base64.b64decode(text).decode('utf-8', errors='ignore')
-    except: return text
+    except:
+        try: return base64.b64decode(text + "=").decode('utf-8', errors='ignore')
+        except:
+            try: return base64.b64decode(text + "==").decode('utf-8', errors='ignore')
+            except: return text
 
 async def fetch_source(session, url):
     try:
@@ -50,32 +79,27 @@ async def fetch_source(session, url):
     return ""
 
 # --- PARSERS ---
-
 def parse_vless_trojan(uri):
     try:
-        # vless://uuid@ip:port?params#name
         protocol = uri.split("://")[0]
         main = uri.split("://")[1]
         if "@" not in main: return None
-        
         uuid, rest = main.split("@", 1)
+        
         if "#" in rest: addr, _ = rest.split("#", 1)
         else: addr = rest
             
         if "?" in addr: addr_port, params_str = addr.split("?", 1)
-        else: return None # Wajib ada params untuk WS/TLS
+        else: return None
             
         if ":" not in addr_port: return None
         ip, port = addr_port.split(":")
         port = int(port)
         
-        # Filter HANYA PORT 443 (Sesuai Request)
-        if port != 443: return None
+        if port != 443: return None # Filter Port 443 Only
 
         params = dict(urllib.parse.parse_qsl(params_str))
-        
-        # Wajib TLS agar support SNI Trick
-        if params.get("security") != "tls": return None
+        if params.get("security") != "tls": return None # Filter TLS Only
 
         return {
             "protocol": protocol,
@@ -94,12 +118,12 @@ def parse_vmess(uri):
     try:
         if not uri.startswith("vmess://"): return None
         b64 = uri.replace("vmess://", "")
-        json_str = base64.b64decode(b64).decode('utf-8', errors='ignore')
+        json_str = base64.b64decode(b64 + "===").decode('utf-8', errors='ignore')
         data = json.loads(json_str)
         
         port = int(data.get("port", 0))
-        if port != 443: return None # Filter Port 443
-        if data.get("tls") != "tls": return None # Filter TLS
+        if port != 443: return None
+        if data.get("tls") != "tls": return None
 
         return {
             "protocol": "vmess",
@@ -135,7 +159,7 @@ def generate_xray_config(data, local_port):
             "port": data["port"],
             "users": [{"id": data["uuid"], "alterId": int(data.get("aid", 0)), "security": "auto"}]
         }]
-    else: # vless / trojan
+    else:
         outbound["settings"]["vnext"] = [{
             "address": data["ip"],
             "port": data["port"],
@@ -174,7 +198,6 @@ async def check_proxy(proxy_str, idx):
         
         proxy_url = f"socks5://127.0.0.1:{local_port}"
         async with aiohttp.ClientSession() as session:
-            # Cek Speedtest Config (Bukti nyata koneksi stabil)
             async with session.get(TARGET_URL, proxy=proxy_url, timeout=10, ssl=False) as response:
                 if response.status == 200:
                     return proxy_str
@@ -185,31 +208,26 @@ async def check_proxy(proxy_str, idx):
     return None
 
 async def main():
-    print("🚀 Starting Universal Aggregator (Port 443/TLS Only)...")
-    
+    print("🚀 Starting Aggregator with NEW SOURCES...")
     candidates = set()
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_source(session, url) for url in SOURCES]
         results = await asyncio.gather(*tasks)
-        
         for content in results:
             if not content: continue
-            # Decode ulang jika perlu
             if not " " in content[:50] and len(content) > 100: content = try_decode(content)
-                
             for line in content.splitlines():
                 line = line.strip()
                 if line.startswith("vless://") or line.startswith("trojan://") or line.startswith("vmess://"):
                     candidates.add(line)
 
-    print(f"📥 Collected {len(candidates)} candidates. Filtering & Checking...")
+    print(f"📥 Collected {len(candidates)} candidates. Filtering Port 443/TLS...")
     
-    # Limit check untuk performa GitHub Actions
     check_list = list(candidates)
     random.shuffle(check_list)
-    check_list = check_list[:1500] 
+    check_list = check_list[:2000] # Naikkan limit sample jadi 2000
     
-    sem = asyncio.Semaphore(20)
+    sem = asyncio.Semaphore(25)
     tasks = []
     for i, p in enumerate(check_list):
         async def wrapped(proxy, idx):
@@ -220,9 +238,7 @@ async def main():
     active = [r for r in results if r]
     
     print(f"✅ VERIFIED 443/TLS PROXIES: {len(active)}")
-    
-    with open("active_proxies.txt", "w") as f:
-        f.write("\n".join(active))
+    with open("active_proxies.txt", "w") as f: f.write("\n".join(active))
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
