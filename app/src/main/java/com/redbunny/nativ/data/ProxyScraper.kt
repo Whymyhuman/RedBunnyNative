@@ -21,10 +21,9 @@ object ProxyScraper {
         .followSslRedirects(true)
         .build()
 
-    // Regex Global: Mencari pola IP dan Port di mana saja dalam teks
-    // Group 1: IP
-    // Group 2: Port (angka 2-5 digit setelah : atau spasi atau koma)
-    private val GLOBAL_REGEX = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[:\s,\t]+(\d{2,5})""")
+    // Regex Global Sederhana: IP:Port
+    // Cocok untuk file all_proxies.txt yang formatnya baris per baris IP:Port
+    private val GLOBAL_REGEX = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})""")
 
     // Fallback data jika internet mati total
     private val FALLBACK_PROXIES = listOf(
