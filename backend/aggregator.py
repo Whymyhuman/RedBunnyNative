@@ -10,111 +10,174 @@ import os
 import urllib.parse
 import random
 
+# --- SUMBER V2RAY (VLESS/VMess/Trojan) ---
 SOURCES = [
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt"
+    "https://raw.githubusercontent.com/mrzero0nol/My-v2ray/main/proxyList.txt",
+    "https://raw.githubusercontent.com/freefq/free/master/vless.txt",
+    "https://raw.githubusercontent.com/freefq/free/master/vmess.txt",
+    "https://raw.githubusercontent.com/rostergamer/v2ray/master/vless",
+    "https://raw.githubusercontent.com/rostergamer/v2ray/master/vmess",
+    "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
+    "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt",
+    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity.txt",
+    "https://raw.githubusercontent.com/mfuu/v2ray/master/vless",
+    "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt",
+    "https://raw.githubusercontent.com/Barimehdi/sub_v2ray/refs/heads/main/vless.txt",
+    "https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/v2ray"
 ]
 
-REGEX_IP_PORT = re.compile(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[:\s,\t]+(\d{2,5})')
+# Target Check: Speedtest API (Cepat & Akurat)
 TARGET_URL = "https://www.speedtest.net/api/js/servers?engine=js"
 XRAY_BIN = "backend/xray_bin/xray"
 LOCAL_PORT_START = 10000
 
-def create_tunnel_link(ip, port):
-    # Encode path dengan benar: /IP-PORT -> %2FIP-PORT
-    raw_path = f"/{ip}-{port}"
-    encoded_path = urllib.parse.quote(raw_path, safe='')
-    
-    base = "vless://96900e2c-fd86-4207-abc1-91ac57cf931d@dauslearn.dpdns.org:443"
-    params = (
-        "?type=ws&"
-        "encryption=none&"
-        "flow=&"
-        "host=media-sin6-3.cdn.whatsapp.net.dauslearn.dpdns.org&"
-        f"path={encoded_path}&"
-        "security=tls&"
-        "sni=media-sin6-3.cdn.whatsapp.net.dauslearn.dpdns.org"
-    )
-    hashtag = f"#Tunnel-{ip}"
-    return f"{base}/{params}{hashtag}"
+def try_decode(text):
+    text = text.strip()
+    if not text: return ""
+    if "://" in text: return text
+    try: return base64.b64decode(text).decode('utf-8', errors='ignore')
+    except: return text
 
 async def fetch_source(session, url):
     try:
-        async with session.get(url, timeout=10) as response:
-            if response.status == 200: return await response.text()
+        async with session.get(url, timeout=15) as response:
+            if response.status == 200:
+                text = await response.text()
+                if not " " in text[:50] and len(text) > 50:
+                    return try_decode(text)
+                return text
     except: pass
     return ""
 
-def parse_vless(uri):
+# --- PARSERS ---
+
+def parse_vless_trojan(uri):
     try:
-        if not uri.startswith("vless://"): return None
-        main = uri.replace("vless://", "")
+        # vless://uuid@ip:port?params#name
+        protocol = uri.split("://")[0]
+        main = uri.split("://")[1]
         if "@" not in main: return None
-        uuid, rest = main.split("@", 1)
         
+        uuid, rest = main.split("@", 1)
         if "#" in rest: addr, _ = rest.split("#", 1)
         else: addr = rest
             
         if "?" in addr: addr_port, params_str = addr.split("?", 1)
-        else: return None
+        else: return None # Wajib ada params untuk WS/TLS
             
-        if ":" in addr_port:
-            ip, port = addr_port.split(":")
-            port = int(port)
-        else: return None
-            
+        if ":" not in addr_port: return None
+        ip, port = addr_port.split(":")
+        port = int(port)
+        
+        # Filter HANYA PORT 443 (Sesuai Request)
+        if port != 443: return None
+
         params = dict(urllib.parse.parse_qsl(params_str))
         
+        # Wajib TLS agar support SNI Trick
+        if params.get("security") != "tls": return None
+
         return {
-            "uuid": uuid, "ip": ip, "port": int(port),
+            "protocol": protocol,
+            "uuid": uuid,
+            "ip": ip,
+            "port": port,
             "type": params.get("type", "tcp"),
             "path": params.get("path", "/"),
             "host": params.get("host", ""),
             "sni": params.get("sni", ""),
-            "security": params.get("security", "none")
+            "security": "tls"
         }
     except: return None
 
-def generate_xray_config(vless, port):
+def parse_vmess(uri):
+    try:
+        if not uri.startswith("vmess://"): return None
+        b64 = uri.replace("vmess://", "")
+        json_str = base64.b64decode(b64).decode('utf-8', errors='ignore')
+        data = json.loads(json_str)
+        
+        port = int(data.get("port", 0))
+        if port != 443: return None # Filter Port 443
+        if data.get("tls") != "tls": return None # Filter TLS
+
+        return {
+            "protocol": "vmess",
+            "uuid": data.get("id"),
+            "ip": data.get("add"),
+            "port": port,
+            "type": data.get("net", "tcp"),
+            "path": data.get("path", "/"),
+            "host": data.get("host", ""),
+            "sni": data.get("sni") or data.get("host", ""),
+            "security": "tls",
+            "aid": data.get("aid", 0)
+        }
+    except: return None
+
+def generate_xray_config(data, local_port):
     outbound = {
-        "protocol": "vless",
-        "settings": {
-            "vnext": [{"address": vless["ip"], "port": vless["port"], "users": [{"id": vless["uuid"], "encryption": "none"}]}]
-        },
+        "protocol": data["protocol"],
+        "settings": {},
         "streamSettings": {
-            "network": vless["type"],
-            "security": vless["security"],
-            "wsSettings": {"path": vless["path"], "headers": {"Host": vless["host"]}} if vless["type"] == "ws" else None,
-            "tlsSettings": {"serverName": vless["sni"], "allowInsecure": True} if vless["security"] == "tls" else None
+            "network": data["type"],
+            "security": "tls",
+            "tlsSettings": {
+                "serverName": data["sni"] or data["host"],
+                "allowInsecure": True
+            }
         }
     }
-    return json.dumps({
-        "log": {"loglevel": "none"},
-        "inbounds": [{"port": port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": True}}],
-        "outbounds": [outbound]
-    })
 
-async def check_proxy(uri, idx):
-    vless = parse_vless(uri)
-    if not vless: return None
+    if data["protocol"] == "vmess":
+        outbound["settings"]["vnext"] = [{
+            "address": data["ip"],
+            "port": data["port"],
+            "users": [{"id": data["uuid"], "alterId": int(data.get("aid", 0)), "security": "auto"}]
+        }]
+    else: # vless / trojan
+        outbound["settings"]["vnext"] = [{
+            "address": data["ip"],
+            "port": data["port"],
+            "users": [{"id": data["uuid"], "encryption": "none"}] if data["protocol"] == "vless" else [{"password": data["uuid"]}]
+        }]
+
+    if data["type"] == "ws":
+        outbound["streamSettings"]["wsSettings"] = {
+            "path": data["path"],
+            "headers": {"Host": data["host"]}
+        }
     
-    port = LOCAL_PORT_START + (idx % 50)
-    cfg_file = f"config_{{port}}.json"
+    config = {
+        "log": {"loglevel": "none"},
+        "inbounds": [{"port": local_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": True}}],
+        "outbounds": [outbound]
+    }
+    return json.dumps(config)
+
+async def check_proxy(proxy_str, idx):
+    data = None
+    if proxy_str.startswith("vmess://"): data = parse_vmess(proxy_str)
+    else: data = parse_vless_trojan(proxy_str)
     
-    with open(cfg_file, "w") as f: f.write(generate_xray_config(vless, port))
+    if not data: return None
+    
+    local_port = LOCAL_PORT_START + (idx % 50)
+    cfg_file = f"config_{local_port}.json"
+    
+    with open(cfg_file, "w") as f: f.write(generate_xray_config(data, local_port))
         
     proc = None
     try:
         proc = subprocess.Popen([XRAY_BIN, "-c", cfg_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
         
-        async with aiohttp.ClientSession() as sess:
-            # Gunakan http://google.com/generate_204 (sangat ringan) untuk cek koneksi tunnel
-            # Speedtest API kadang memblokir datacenter IP (GitHub Actions)
-            async with sess.get("http://www.gstatic.com/generate_204", proxy=f"socks5://127.0.0.1:{port}", timeout=5) as resp:
-                if resp.status == 204:
-                    return uri
+        proxy_url = f"socks5://127.0.0.1:{local_port}"
+        async with aiohttp.ClientSession() as session:
+            # Cek Speedtest Config (Bukti nyata koneksi stabil)
+            async with session.get(TARGET_URL, proxy=proxy_url, timeout=10, ssl=False) as response:
+                if response.status == 200:
+                    return proxy_str
     except: pass
     finally:
         if proc: proc.kill()
@@ -122,33 +185,41 @@ async def check_proxy(uri, idx):
     return None
 
 async def main():
-    print("🚀 Starting Tunnel Checker...")
-    raw_ips = set()
-    async with aiohttp.ClientSession() as sess:
-        tasks = [fetch_source(sess, u) for u in SOURCES]
+    print("🚀 Starting Universal Aggregator (Port 443/TLS Only)...")
+    
+    candidates = set()
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_source(session, url) for url in SOURCES]
         results = await asyncio.gather(*tasks)
-        for c in results:
-            if c: raw_ips.update([(m[0], m[1]) for m in REGEX_IP_PORT.findall(c)])
+        
+        for content in results:
+            if not content: continue
+            # Decode ulang jika perlu
+            if not " " in content[:50] and len(content) > 100: content = try_decode(content)
+                
+            for line in content.splitlines():
+                line = line.strip()
+                if line.startswith("vless://") or line.startswith("trojan://") or line.startswith("vmess://"):
+                    candidates.add(line)
 
-    print(f"📥 Found {len(raw_ips)} raw proxies.")
+    print(f"📥 Collected {len(candidates)} candidates. Filtering & Checking...")
     
-    candidates = [create_tunnel_link(ip, p) for ip, p in raw_ips]
-    random.shuffle(candidates)
-    
-    # Limit 500 checks to save time & server load
-    candidates = candidates[:500]
-    
-    print(f"🔍 Checking {len(candidates)} samples...")
+    # Limit check untuk performa GitHub Actions
+    check_list = list(candidates)
+    random.shuffle(check_list)
+    check_list = check_list[:1500] 
     
     sem = asyncio.Semaphore(20)
-    async def sem_check(p, i):
-        async with sem: return await check_proxy(p, i)
-
-    tasks = [sem_check(p, i) for i, p in enumerate(candidates)]
+    tasks = []
+    for i, p in enumerate(check_list):
+        async def wrapped(proxy, idx):
+            async with sem: return await check_proxy(proxy, idx)
+        tasks.append(wrapped(p, i))
+        
     results = await asyncio.gather(*tasks)
     active = [r for r in results if r]
     
-    print(f"✅ Verified Working: {len(active)}")
+    print(f"✅ VERIFIED 443/TLS PROXIES: {len(active)}")
     
     with open("active_proxies.txt", "w") as f:
         f.write("\n".join(active))
