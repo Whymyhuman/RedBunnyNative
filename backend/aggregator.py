@@ -12,46 +12,18 @@ import random
 
 # --- SUMBER V2RAY (VLESS/VMess/Trojan) ---
 SOURCES = [
-    # --- KOLEKTOR POPULER (Update Tiap Jam) ---
     "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vless",
     "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vmess",
     "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/trojan",
     "https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/server.txt",
     "https://raw.githubusercontent.com/soroushmirza5/telegram-configs-collector/main/protocols/vless",
     "https://raw.githubusercontent.com/soroushmirza5/telegram-configs-collector/main/protocols/vmess",
-    "https://raw.githubusercontent.com/soroushmirza5/telegram-configs-collector/main/protocols/trojan",
-    "https://raw.githubusercontent.com/AzadNetCH/Clash/main/V2Ray/V2Ray-64.txt",
-    "https://raw.githubusercontent.com/ts-sf/fly/main/v2",
-    "https://raw.githubusercontent.com/mkb2023/One-Click-Proxy/main/v2ray.txt",
-    
-    # --- SUMBER LAMA (Tapi Masih Bagus) ---
     "https://raw.githubusercontent.com/mrzero0nol/My-v2ray/main/proxyList.txt",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/master/Vless",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/master/Vmess",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/master/Trojan",
-    "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Sub/Vless",
-    "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Sub/Vmess",
-    "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Sub/Trojan",
-    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/vless.txt",
-    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/vmess.txt",
-    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/trojan.txt",
-    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/vless",
-    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/vmess",
-    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/trojan",
     "https://raw.githubusercontent.com/freefq/free/master/vless.txt",
-    "https://raw.githubusercontent.com/freefq/free/master/vmess.txt",
-    "https://raw.githubusercontent.com/rostergamer/v2ray/master/vless",
-    "https://raw.githubusercontent.com/rostergamer/v2ray/master/vmess",
-    "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
-    "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt",
-    "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity.txt",
-    "https://raw.githubusercontent.com/mfuu/v2ray/master/vless",
-    "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt",
-    "https://raw.githubusercontent.com/Barimehdi/sub_v2ray/refs/heads/main/vless.txt",
-    "https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/v2ray"
+    "https://raw.githubusercontent.com/rostergamer/v2ray/master/vless"
 ]
 
-# Target Check: Speedtest API
+# Target Check: Speedtest Config (Ringan)
 TARGET_URL = "https://www.speedtest.net/api/js/servers?engine=js"
 XRAY_BIN = "backend/xray_bin/xray"
 LOCAL_PORT_START = 10000
@@ -62,44 +34,48 @@ def try_decode(text):
     if "://" in text: return text
     try: return base64.b64decode(text).decode('utf-8', errors='ignore')
     except:
-        try: return base64.b64decode(text + "=").decode('utf-8', errors='ignore')
-        except:
-            try: return base64.b64decode(text + "==").decode('utf-8', errors='ignore')
-            except: return text
+        try: return base64.b64decode(text + "==").decode('utf-8', errors='ignore')
+        except: return text
 
 async def fetch_source(session, url):
     try:
-        async with session.get(url, timeout=15) as response:
+        async with session.get(url, timeout=20) as response:
             if response.status == 200:
                 text = await response.text()
-                if not " " in text[:50] and len(text) > 50:
-                    return try_decode(text)
+                if not " " in text[:50] and len(text) > 50: return try_decode(text)
                 return text
     except: pass
     return ""
 
-# --- PARSERS ---
+# --- PARSERS (RELAXED) ---
 def parse_vless_trojan(uri):
     try:
+        # vless://uuid@ip:port?params#name
         protocol = uri.split("://")[0]
         main = uri.split("://")[1]
         if "@" not in main: return None
-        uuid, rest = main.split("@", 1)
         
+        uuid, rest = main.split("@", 1)
         if "#" in rest: addr, _ = rest.split("#", 1)
         else: addr = rest
             
         if "?" in addr: addr_port, params_str = addr.split("?", 1)
-        else: return None
+        else: return None 
             
-        if ":" not in addr_port: return None
-        ip, port = addr_port.split(":")
-        port = int(port)
+        # Handle IPv6 brackets [::1]:443
+        if "]:" in addr_port:
+            ip = addr_port.split("]:")[0].replace("[", "")
+            port = addr_port.split("]:")[1]
+        elif ":" in addr_port:
+            ip, port = addr_port.split(":")
+        else: return None
         
-        if port != 443: return None # Filter Port 443 Only
-
+        port = int(port)
         params = dict(urllib.parse.parse_qsl(params_str))
-        if params.get("security") != "tls": return None # Filter TLS Only
+        
+        # HAPUS FILTER PORT 443 agar lebih banyak hasil
+        # Tapi tetap wajib TLS agar bisa SNI trick
+        # if params.get("security") != "tls": return None 
 
         return {
             "protocol": protocol,
@@ -110,7 +86,7 @@ def parse_vless_trojan(uri):
             "path": params.get("path", "/"),
             "host": params.get("host", ""),
             "sni": params.get("sni", ""),
-            "security": "tls"
+            "security": params.get("security", "none")
         }
     except: return None
 
@@ -121,20 +97,16 @@ def parse_vmess(uri):
         json_str = base64.b64decode(b64 + "===").decode('utf-8', errors='ignore')
         data = json.loads(json_str)
         
-        port = int(data.get("port", 0))
-        if port != 443: return None
-        if data.get("tls") != "tls": return None
-
         return {
             "protocol": "vmess",
             "uuid": data.get("id"),
             "ip": data.get("add"),
-            "port": port,
+            "port": int(data.get("port", 0)),
             "type": data.get("net", "tcp"),
             "path": data.get("path", "/"),
             "host": data.get("host", ""),
             "sni": data.get("sni") or data.get("host", ""),
-            "security": "tls",
+            "security": data.get("tls", ""),
             "aid": data.get("aid", 0)
         }
     except: return None
@@ -145,39 +117,29 @@ def generate_xray_config(data, local_port):
         "settings": {},
         "streamSettings": {
             "network": data["type"],
-            "security": "tls",
-            "tlsSettings": {
-                "serverName": data["sni"] or data["host"],
-                "allowInsecure": True
-            }
+            "security": data["security"],
+            "tlsSettings": {"serverName": data["sni"] or data["host"], "allowInsecure": True} if data["security"] == "tls" else None,
+            "wsSettings": {"path": data["path"], "headers": {"Host": data["host"]}} if data["type"] == "ws" else None,
+            "grpcSettings": {"serviceName": data["path"]} if data["type"] == "grpc" else None
         }
     }
 
     if data["protocol"] == "vmess":
         outbound["settings"]["vnext"] = [{
-            "address": data["ip"],
-            "port": data["port"],
+            "address": data["ip"], "port": data["port"],
             "users": [{"id": data["uuid"], "alterId": int(data.get("aid", 0)), "security": "auto"}]
         }]
     else:
         outbound["settings"]["vnext"] = [{
-            "address": data["ip"],
-            "port": data["port"],
+            "address": data["ip"], "port": data["port"],
             "users": [{"id": data["uuid"], "encryption": "none"}] if data["protocol"] == "vless" else [{"password": data["uuid"]}]
         }]
-
-    if data["type"] == "ws":
-        outbound["streamSettings"]["wsSettings"] = {
-            "path": data["path"],
-            "headers": {"Host": data["host"]}
-        }
     
-    config = {
+    return json.dumps({
         "log": {"loglevel": "none"},
         "inbounds": [{"port": local_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": True}}],
         "outbounds": [outbound]
-    }
-    return json.dumps(config)
+    })
 
 async def check_proxy(proxy_str, idx):
     data = None
@@ -196,9 +158,9 @@ async def check_proxy(proxy_str, idx):
         proc = subprocess.Popen([XRAY_BIN, "-c", cfg_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         await asyncio.sleep(1.5)
         
-        proxy_url = f"socks5://127.0.0.1:{local_port}"
         async with aiohttp.ClientSession() as session:
-            async with session.get(TARGET_URL, proxy=proxy_url, timeout=10, ssl=False) as response:
+            # Timeout 15 detik
+            async with session.get(TARGET_URL, proxy=f"socks5://127.0.0.1:{local_port}", timeout=15, ssl=False) as response:
                 if response.status == 200:
                     return proxy_str
     except: pass
@@ -208,7 +170,7 @@ async def check_proxy(proxy_str, idx):
     return None
 
 async def main():
-    print("🚀 Starting Aggregator with NEW SOURCES...")
+    print("🚀 Starting Relaxed Aggregator...")
     candidates = set()
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_source(session, url) for url in SOURCES]
@@ -218,16 +180,16 @@ async def main():
             if not " " in content[:50] and len(content) > 100: content = try_decode(content)
             for line in content.splitlines():
                 line = line.strip()
-                if line.startswith("vless://") or line.startswith("trojan://") or line.startswith("vmess://"):
+                if line.startswith(("vless://", "trojan://", "vmess://")):
                     candidates.add(line)
 
-    print(f"📥 Collected {len(candidates)} candidates. Filtering Port 443/TLS...")
+    print(f"📥 Collected {len(candidates)} candidates. Checking...")
     
     check_list = list(candidates)
     random.shuffle(check_list)
-    check_list = check_list[:2000] # Naikkan limit sample jadi 2000
+    check_list = check_list[:2000] # Sample 2000
     
-    sem = asyncio.Semaphore(25)
+    sem = asyncio.Semaphore(20)
     tasks = []
     for i, p in enumerate(check_list):
         async def wrapped(proxy, idx):
@@ -237,7 +199,7 @@ async def main():
     results = await asyncio.gather(*tasks)
     active = [r for r in results if r]
     
-    print(f"✅ VERIFIED 443/TLS PROXIES: {len(active)}")
+    print(f"✅ VERIFIED WORKING: {len(active)}")
     with open("active_proxies.txt", "w") as f: f.write("\n".join(active))
 
 if __name__ == "__main__":
