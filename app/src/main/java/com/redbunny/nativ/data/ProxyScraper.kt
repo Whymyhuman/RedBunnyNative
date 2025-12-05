@@ -11,34 +11,34 @@ import kotlinx.coroutines.withContext
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 object ProxyScraper {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS) // Lebih lama lagi
+        .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
 
     // Regex Global Sederhana: IP:Port
-    // Cocok untuk file all_proxies.txt yang formatnya baris per baris IP:Port
     private val GLOBAL_REGEX = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})""")
 
-    // Fallback data jika internet mati total
     private val FALLBACK_PROXIES = listOf(
         ProxyItem("1.1.1.1", 80, "US", "Cloudflare (Fallback)", ProxyType.UNKNOWN),
         ProxyItem("8.8.8.8", 80, "US", "Google (Fallback)", ProxyType.UNKNOWN)
     )
 
     suspend fun scrapeAll(urls: Set<String>, onProgress: (String) -> Unit): List<ProxyItem> = withContext(Dispatchers.IO) {
-        val deferreds = urls.map { url ->
-            async { 
-                var items = fetchUrl(url, onProgress)
-                if (items.isEmpty() && url.contains("githubusercontent")) {
-                    val mirror = url.replace("raw.githubusercontent.com", "mirror.ghproxy.com/https://raw.githubusercontent.com")
-                    onProgress("Retry Mirror: $mirror")
-                    items = fetchUrl(mirror, onProgress)
+        val deferreds = urls.map {
+            async {
+                var items = fetchUrl(it, onProgress)
+                // Jika gagal dan URL adalah GitHub API, coba raw sebagai fallback (kebalikan dari sebelumnya)
+                if (items.isEmpty() && it.contains("api.github.com")) {
+                    val rawUrl = "https://raw.githubusercontent.com/Whymyhuman/RedBunnyNative/main/all_proxies.txt"
+                    onProgress("API Failed. Trying Raw: $rawUrl")
+                    items = fetchUrl(rawUrl, onProgress)
                 }
                 items
             }
@@ -47,7 +47,7 @@ object ProxyScraper {
         val allProxies = results.flatten().distinctBy { "${it.ip}:${it.port}" }
 
         if (allProxies.isEmpty()) {
-            onProgress("WARNING: No proxies found via network. Using fallback.")
+            onProgress("CRITICAL: All sources failed. Check internet connection.")
             return@withContext FALLBACK_PROXIES
         }
         
@@ -56,56 +56,69 @@ object ProxyScraper {
 
     private fun fetchUrl(url: String, onProgress: (String) -> Unit): List<ProxyItem> {
         try {
+            // Add cache buster for raw urls, API urls ignore it mostly but fine
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("User-Agent", "RedBunnyNative/1.0") // Simple UA
+                .header("Accept", "application/vnd.github.v3+json, text/plain") 
                 .build()
 
             val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: return emptyList()
+            val responseBody = response.body?.string()
             response.close()
 
-            val decoded = if (isBase64(body)) decodeBase64(body) else body
-            val items = parseContentGlobal(decoded)
+            if (!response.isSuccessful || responseBody == null) {
+                onProgress("Err ${response.code}: $url")
+                return emptyList()
+            }
+
+            var content = responseBody
+
+            // 1. Cek apakah ini respon JSON dari GitHub API?
+            if (responseBody.trim().startsWith("{") && url.contains("api.github.com")) {
+                try {
+                    val json = JSONObject(responseBody)
+                    // GitHub API returns content in Base64 with newlines
+                    val encodedContent = json.optString("content").replace("\n", "")
+                    if (encodedContent.isNotEmpty()) {
+                        content = String(Base64.decode(encodedContent, Base64.DEFAULT))
+                        onProgress("Decoded GitHub API response")
+                    }
+                } catch (e: Exception) {
+                    onProgress("JSON Parse Error: ${e.message}")
+                }
+            } 
+            // 2. Cek Base64 biasa (Raw file)
+            else if (isBase64(content.trim())) {
+                content = decodeBase64(content.trim())
+            }
+
+            val items = parseContentGlobal(content)
             
             if (items.isNotEmpty()) {
-                onProgress("OK: $url (+${items.size})")
+                onProgress("Success: Retrieved ${items.size} proxies")
             } else {
-                onProgress("Empty: $url")
+                onProgress("Zero proxies found in content")
             }
             return items
+
         } catch (e: Exception) {
-            onProgress("Err: $url (${e.message})")
+            onProgress("Exception: ${e.message}")
+            Log.e("ProxyScraper", "Fetch error", e)
             return emptyList()
         }
     }
 
     private fun parseContentGlobal(content: String): List<ProxyItem> {
         val items = mutableListOf<ProxyItem>()
-        
-        // 1. Coba parsing V2Ray Links dulu (vless:// etc)
-        val lines = content.split("\n", " ")
-        for (line in lines) {
-            val trimmed = line.trim()
-            if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://")) {
-                parseUri(trimmed)?.let { items.add(it) }
-            }
-        }
-
-        // 2. Parsing IP:Port menggunakan Global Regex pada SELURUH teks sekaligus
-        // Ini menangani format JSON, CSV, HTML, atau teks acak sekalipun
         val matches = GLOBAL_REGEX.findAll(content)
         for (match in matches) {
             val (ip, portStr) = match.destructured
             val port = portStr.toIntOrNull()
-            if (port != null && port <= 65535) {
-                // Cek apakah IP valid (0-255)
-                if (isValidIp(ip)) {
-                    items.add(ProxyItem(ip, port, "Unknown", "Public", ProxyType.UNKNOWN))
-                }
+            if (port != null && port <= 65535 && isValidIp(ip)) {
+                items.add(ProxyItem(ip, port, "Unknown", "Public", ProxyType.UNKNOWN))
             }
         }
-        
         return items
     }
 
@@ -113,21 +126,9 @@ object ProxyScraper {
         return ip.split(".").all { it.toIntOrNull() in 0..255 }
     }
 
-    private fun parseUri(uri: String): ProxyItem? {
-        return try {
-            val regexUri = Regex("""@([^:]+):(\d+)""")
-            val match = regexUri.find(uri) ?: return null
-            val ip = match.groupValues[1]
-            val port = match.groupValues[2].toIntOrNull() ?: return null
-            val type = if (uri.startsWith("vless")) ProxyType.VLESS else ProxyType.TROJAN
-            ProxyItem(ip, port, "Unknown", "Imported", type)
-        } catch (e: Exception) { null }
-    }
-
     private fun isBase64(str: String): Boolean {
-        val t = str.trim()
-        if (t.contains(" ") || t.length < 20) return false
-        return try { Base64.decode(t, Base64.DEFAULT); true } catch (e: Exception) { false }
+        if (str.contains(" ") || str.length < 20) return false
+        return try { Base64.decode(str, Base64.DEFAULT); true } catch (e: Exception) { false }
     }
 
     private fun decodeBase64(str: String): String {
