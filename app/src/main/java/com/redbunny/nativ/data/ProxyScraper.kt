@@ -72,7 +72,7 @@ object ProxyScraper {
                 return emptyList()
             }
 
-            var content = responseBody
+            var content = responseBody!!
 
             // 1. Cek apakah ini respon JSON dari GitHub API?
             if (responseBody.trim().startsWith("{") && url.contains("api.github.com")) {
