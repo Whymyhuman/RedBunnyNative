@@ -4,11 +4,14 @@ import asyncio
 import aiohttp
 import time
 import base64
+import json
+import subprocess
+import os
+import socket
 import urllib.parse
 
-# --- KONFIGURASI SUMBER ---
+# --- KONFIGURASI ---
 SOURCES = [
-    # V2RAY / XRAY (Vless/Trojan/Vmess)
     "https://raw.githubusercontent.com/mrzero0nol/My-v2ray/main/proxyList.txt",
     "https://raw.githubusercontent.com/freefq/free/master/vless.txt",
     "https://raw.githubusercontent.com/rostergamer/v2ray/master/vless",
@@ -18,89 +21,152 @@ SOURCES = [
     "https://raw.githubusercontent.com/mfuu/v2ray/master/vless",
     "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt",
     "https://raw.githubusercontent.com/Barimehdi/sub_v2ray/refs/heads/main/vless.txt",
-    "https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/v2ray",
-    
-    # HTTP / SOCKS5
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
-    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
+    "https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/v2ray"
 ]
 
-# Regex untuk menangkap IP:Port (Format raw)
-REGEX_IP_PORT = re.compile(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[:\s,\t]+(\d{2,5})\b')
-
-TARGET_URL = "http://www.speedtest.net"
-CHECK_TIMEOUT = 5
+# Kita fokus ke VLESS saja dulu karena ini yang paling tricky
+TARGET_URL = "https://www.speedtest.net" # HTTPS check!
+XRAY_BIN = "backend/xray_bin/xray"
+LOCAL_PORT_START = 10000
 
 def decode_base64(s):
-    try:
-        return base64.b64decode(s).decode('utf-8')
-    except:
-        return s
+    try: return base64.b64decode(s).decode('utf-8', errors='ignore')
+    except: return s
 
 async def fetch_source(session, url):
     try:
         async with session.get(url, timeout=15) as response:
             if response.status == 200:
                 text = await response.text()
-                # Cek apakah ini Base64 murni (Subscription link)
                 if not " " in text[:50] and len(text) > 20:
-                    try:
-                        decoded = base64.b64decode(text).decode('utf-8', errors='ignore')
-                        return decoded
-                    except:
-                        pass
+                    return decode_base64(text)
                 return text
-    except:
-        pass
+    except: pass
     return ""
 
-async def check_http_proxy(proxy_str, session):
-    """Cek HTTP Proxy dengan mencoba akses Speedtest"""
-    # Format: IP:PORT
-    proxy_url = f"http://{proxy_str}"
+def parse_vless(uri):
     try:
-        start = time.time()
-        async with session.get(TARGET_URL, proxy=proxy_url, timeout=CHECK_TIMEOUT, allow_redirects=True) as response:
-            if response.status in [200, 301, 302]:
-                return proxy_str
+        # vless://uuid@ip:port?params#name
+        if not uri.startswith("vless://"): return None
+        
+        main_part = uri.replace("vless://", "")
+        if "@" not in main_part: return None
+        
+        uuid, rest = main_part.split("@", 1)
+        
+        if "#" in rest:
+            addr_part, hash_part = rest.split("#", 1)
+        else:
+            addr_part = rest
+            
+        if "?" in addr_part:
+            addr_port, params_str = addr_part.split("?", 1)
+        else:
+            addr_port = addr_part
+            params_str = ""
+            
+        ip, port = addr_port.split(":")
+        port = int(port)
+        
+        params = dict(urllib.parse.parse_qsl(params_str))
+        
+        return {
+            "uuid": uuid,
+            "ip": ip,
+            "port": port,
+            "type": params.get("type", "tcp"),
+            "path": params.get("path", "/"),
+            "host": params.get("host", ""),
+            "sni": params.get("sni", ""),
+            "security": params.get("security", "none")
+        }
     except:
-        pass
-    return None
+        return None
 
-async def check_tcp_connect(proxy_config):
-    """
-    Cek VLESS/Trojan dengan TCP Connect ke IP:PORT.
-    Kita tidak bisa cek UUID valid tanpa Xray Core, tapi minimal kita tahu servernya ON.
-    """
+def generate_xray_config(vless_data, local_port):
+    # Template config client Xray minimalis
+    outbound = {
+        "protocol": "vless",
+        "settings": {
+            "vnext": [{
+                "address": vless_data["ip"],
+                "port": vless_data["port"],
+                "users": [{"id": vless_data["uuid"], "encryption": "none"}]
+            }]
+        },
+        "streamSettings": {
+            "network": vless_data["type"],
+            "security": vless_data["security"],
+        }
+    }
+    
+    # Tambahkan detail transport
+    if vless_data["type"] == "ws":
+        outbound["streamSettings"]["wsSettings"] = {
+            "path": vless_data["path"],
+            "headers": {"Host": vless_data["host"]} if vless_data["host"] else {}
+        }
+    
+    if vless_data["security"] == "tls":
+        outbound["streamSettings"]["tlsSettings"] = {
+            "serverName": vless_data["sni"] or vless_data["host"]
+        }
+
+    config = {
+        "log": {"loglevel": "error"},
+        "inbounds": [{
+            "port": local_port,
+            "listen": "127.0.0.1",
+            "protocol": "socks",
+            "settings": {"udp": True}
+        }],
+        "outbounds": [outbound]
+    }
+    return json.dumps(config)
+
+async def check_proxy_with_xray(proxy_uri, port_offset):
+    vless_data = parse_vless(proxy_uri)
+    if not vless_data: return None
+    
+    local_port = LOCAL_PORT_START + port_offset
+    config_str = generate_xray_config(vless_data, local_port)
+    
+    # Tulis config sementara
+    config_file = f"config_{local_port}.json"
+    with open(config_file, "w") as f:
+        f.write(config_str)
+        
+    process = None
     try:
-        # Parsing manual vless://uuid@ip:port...
-        # Atau trojan://password@ip:port...
-        uri = proxy_config
-        if "@" in uri and ":" in uri:
-            # Ambil bagian setelah @ dan sebelum ? atau / atau #
-            main_part = uri.split("@")[1].split("?")[0].split("#")[0].split("/")[0]
-            if ":" in main_part:
-                ip, port = main_part.split(":")
-                port = int(port)
-                
-                # Lakukan TCP Connect
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(ip, port), timeout=CHECK_TIMEOUT
-                )
-                writer.close()
-                await writer.wait_closed()
-                return proxy_config # Server hidup!
-    except:
+        # Jalankan Xray
+        process = subprocess.Popen([XRAY_BIN, "-c", config_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Tunggu Xray siap
+        await asyncio.sleep(1)
+        
+        # Cek koneksi via proxy lokal
+        start = time.time()
+        proxy_url = f"socks5://127.0.0.1:{local_port}"
+        
+        async with aiohttp.ClientSession() as session:
+            # Timeout ketat 10 detik untuk loading halaman speedtest
+            async with session.get(TARGET_URL, proxy=proxy_url, timeout=10, ssl=False) as response:
+                # Jika bisa load halaman (status 200), berarti VLESS valid!
+                if response.status == 200:
+                    return proxy_uri
+                    
+    except Exception as e:
+        # print(f"Failed: {e}")
         pass
+    finally:
+        if process: process.kill()
+        if os.path.exists(config_file): os.remove(config_file)
+        
     return None
 
 async def main():
-    print(f"🚀 Starting Smart Aggregator...")
-    
-    raw_proxies = set()   # Set IP:Port
-    vless_proxies = set() # Set vless://...
+    print(f"🚀 Starting Real Xray Checker...")
+    vless_proxies = set()
     
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_source(session, url) for url in SOURCES]
@@ -108,59 +174,33 @@ async def main():
         
         for content in results:
             if not content: continue
-            
-            # 1. Cari Link V2Ray
             for line in content.splitlines():
-                line = line.strip()
-                if line.startswith("vless://") or line.startswith("trojan://") or line.startswith("vmess://"):
-                    vless_proxies.add(line)
-            
-            # 2. Cari Raw IP:Port (Hanya jika bukan baris VLESS)
-            matches = REGEX_IP_PORT.findall(content)
-            for ip, port in matches:
-                # Filter IP lokal/invalid sederhana
-                if ip.startswith("127.") or ip.startswith("192.168."): continue
-                raw_proxies.add(f"{ip}:{port}")
+                if line.strip().startswith("vless://"):
+                    vless_proxies.add(line.strip())
 
-    print(f"📥 Collected: {len(raw_proxies)} RAW proxies, {len(vless_proxies)} VLESS/Trojan configs.")
-
-    final_active = []
+    print(f"📥 Collected: {len(vless_proxies)} potential VLESS candidates.")
     
-    # --- CHECKER RAW (HTTP) ---
-    sem = asyncio.Semaphore(100)
-    async with aiohttp.ClientSession() as checker_session:
-        async def sem_check_http(p):
+    # Batasi concurrency karena Xray makan CPU
+    sem = asyncio.Semaphore(20) 
+    
+    tasks = []
+    for i, p in enumerate(list(vless_proxies)[:500]): # Sample 500 agar tidak timeout di Action
+        async def wrapped_check(proxy, idx):
             async with sem:
-                return await check_http_proxy(p, checker_session)
+                return await check_proxy_with_xray(proxy, idx % 50) # Reuse ports
+        tasks.append(wrapped_check(p, i))
         
-        tasks = [sem_check_http(p) for p in raw_proxies]
-        results = await asyncio.gather(*tasks)
-        active_raw = [r for r in results if r]
-        final_active.extend(active_raw)
-        print(f"✅ Active HTTP/SOCKS: {len(active_raw)}")
-
-    # --- CHECKER VLESS (TCP) ---
-    # Karena jumlahnya bisa ribuan dan TCP connect butuh resources, kita batasi atau sample
-    # Untuk sekarang kita cek semua tapi dengan timeout ketat
-    async def sem_check_tcp(p):
-        async with sem:
-            return await check_tcp_connect(p)
-
-    tasks = [sem_check_tcp(p) for p in vless_proxies]
     results = await asyncio.gather(*tasks)
-    active_vless = [r for r in results if r]
-    final_active.extend(active_vless)
-    print(f"✅ Active VLESS/Trojan: {len(active_vless)}")
+    active_proxies = [r for r in results if r]
+    
+    print(f"✅ VERIFIED Active VLESS (Speedtest Access): {len(active_proxies)}")
 
-    # Save Only Active
     with open("active_proxies.txt", "w") as f:
-        f.write("\n".join(final_active))
+        f.write("\n".join(active_proxies))
         
-    # Save All (Backup)
+    # Backup all
     with open("all_proxies.txt", "w") as f:
-        f.write("\n".join(raw_proxies) + "\n" + "\n".join(vless_proxies))
-        
-    print("💾 Saved to 'active_proxies.txt'.")
+        f.write("\n".join(vless_proxies))
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()

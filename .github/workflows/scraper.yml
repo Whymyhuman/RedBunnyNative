@@ -20,8 +20,14 @@ jobs:
         with:
           python-version: '3.10' 
 
+      - name: Install Xray Core
+        run: |
+          wget https://github.com/XTLS/Xray-core/releases/download/v1.8.4/Xray-linux-64.zip
+          unzip -o Xray-linux-64.zip -d backend/xray_bin
+          chmod +x backend/xray_bin/xray
+
       - name: Install dependencies
-        run: pip install requests aiohttp
+        run: pip install requests aiohttp psutil
 
       - name: Run Aggregator & Checker
         run: python backend/aggregator.py
