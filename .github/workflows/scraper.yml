@@ -1,4 +1,4 @@
-name: Proxy Aggregator
+name: Proxy Aggregator & Checker
 
 on:
   schedule:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  scrape:
+  scrape_and_check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -21,14 +21,14 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests aiohttp
 
-      - name: Run Aggregator Script
+      - name: Run Aggregator & Checker
         run: python backend/aggregator.py
 
       - name: Commit and Push changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add all_proxies.txt
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update proxy list [skip ci]" && git push)
+          git add all_proxies.txt active_proxies.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update active proxies [skip ci]" && git push)

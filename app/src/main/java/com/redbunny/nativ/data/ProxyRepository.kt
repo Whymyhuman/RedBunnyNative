@@ -7,10 +7,10 @@ object ProxyRepository {
     private const val PREF_NAME = "redbunny_prefs"
     private const val KEY_SOURCES = "proxy_sources"
 
-    // SUMBER TERPUSAT (GITHUB API)
-    // Menggunakan API lebih stabil daripada raw.githubusercontent
+    // SUMBER TERPUSAT (ACTIVE PROXIES)
+    // Menggunakan file yang sudah difilter (hidup) oleh server checker
     private val DEFAULT_SOURCES = setOf(
-        "https://api.github.com/repos/Whymyhuman/RedBunnyNative/contents/all_proxies.txt"
+        "https://api.github.com/repos/Whymyhuman/RedBunnyNative/contents/active_proxies.txt"
     )
 
     fun getSources(context: Context): Set<String> {
