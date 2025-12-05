@@ -59,7 +59,11 @@ def parse_vless(uri):
         if "?" in addr: addr_port, params_str = addr.split("?", 1)
         else: return None
             
-ip, port = addr_port.split(":")
+        if ":" in addr_port:
+            ip, port = addr_port.split(":")
+            port = int(port)
+        else: return None
+            
         params = dict(urllib.parse.parse_qsl(params_str))
         
         return {
