@@ -10,7 +10,6 @@ import os
 import urllib.parse
 import random
 
-# --- SUMBER V2RAY (VLESS/VMess/Trojan) ---
 SOURCES = [
     "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vless",
     "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vmess",
@@ -23,8 +22,8 @@ SOURCES = [
     "https://raw.githubusercontent.com/rostergamer/v2ray/master/vless"
 ]
 
-# Target Check: Speedtest Config (Ringan)
-TARGET_URL = "https://www.speedtest.net/api/js/servers?engine=js"
+# Target: Google 204 (Sangat Ringan & Cepat)
+TARGET_URL = "http://www.gstatic.com/generate_204"
 XRAY_BIN = "backend/xray_bin/xray"
 LOCAL_PORT_START = 10000
 
@@ -34,7 +33,7 @@ def try_decode(text):
     if "://" in text: return text
     try: return base64.b64decode(text).decode('utf-8', errors='ignore')
     except:
-        try: return base64.b64decode(text + "==").decode('utf-8', errors='ignore')
+        try: return base64.b64decode(text + "===").decode('utf-8', errors='ignore')
         except: return text
 
 async def fetch_source(session, url):
@@ -47,22 +46,20 @@ async def fetch_source(session, url):
     except: pass
     return ""
 
-# --- PARSERS (RELAXED) ---
+# --- PARSERS ---
 def parse_vless_trojan(uri):
     try:
-        # vless://uuid@ip:port?params#name
         protocol = uri.split("://")[0]
         main = uri.split("://")[1]
         if "@" not in main: return None
-        
         uuid, rest = main.split("@", 1)
+        
         if "#" in rest: addr, _ = rest.split("#", 1)
         else: addr = rest
             
         if "?" in addr: addr_port, params_str = addr.split("?", 1)
         else: return None 
             
-        # Handle IPv6 brackets [::1]:443
         if "]:" in addr_port:
             ip = addr_port.split("]:")[0].replace("[", "")
             port = addr_port.split("]:")[1]
@@ -73,10 +70,6 @@ def parse_vless_trojan(uri):
         port = int(port)
         params = dict(urllib.parse.parse_qsl(params_str))
         
-        # HAPUS FILTER PORT 443 agar lebih banyak hasil
-        # Tapi tetap wajib TLS agar bisa SNI trick
-        # if params.get("security") != "tls": return None 
-
         return {
             "protocol": protocol,
             "uuid": uuid,
@@ -132,7 +125,7 @@ def generate_xray_config(data, local_port):
     else:
         outbound["settings"]["vnext"] = [{
             "address": data["ip"], "port": data["port"],
-            "users": [{"id": data["uuid"], "encryption": "none"}] if data["protocol"] == "vless" else [{"password": data["uuid"]}]
+            "users": [{"id": data["uuid"], "encryption": "none"}] if data["protocol"] == "vless" else [{"password": data["uuid"]} ]
         }]
     
     return json.dumps({
@@ -151,7 +144,9 @@ async def check_proxy(proxy_str, idx):
     local_port = LOCAL_PORT_START + (idx % 50)
     cfg_file = f"config_{local_port}.json"
     
-    with open(cfg_file, "w") as f: f.write(generate_xray_config(data, local_port))
+    # Generate Config
+    config_content = generate_xray_config(data, local_port)
+    with open(cfg_file, "w") as f: f.write(config_content)
         
     proc = None
     try:
@@ -159,18 +154,22 @@ async def check_proxy(proxy_str, idx):
         await asyncio.sleep(1.5)
         
         async with aiohttp.ClientSession() as session:
-            # Timeout 15 detik
-            async with session.get(TARGET_URL, proxy=f"socks5://127.0.0.1:{local_port}", timeout=15, ssl=False) as response:
-                if response.status == 200:
+            # Check Google 204
+            async with session.get(TARGET_URL, proxy=f"socks5://127.0.0.1:{local_port}", timeout=10, ssl=False) as response:
+                if response.status == 204:
                     return proxy_str
-    except: pass
+    except Exception as e:
+        # Untuk debug: Jika ini sampel pertama, print errornya
+        if idx == 0:
+            print(f"DEBUG: Check failed for {data['ip']}:{data['port']} - {e}")
+            # print(f"DEBUG Config: {config_content}") 
     finally:
         if proc: proc.kill()
         if os.path.exists(cfg_file): os.remove(cfg_file)
     return None
 
 async def main():
-    print("🚀 Starting Relaxed Aggregator...")
+    print("🚀 Starting Aggregator (Target: Google 204)...")
     candidates = set()
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_source(session, url) for url in SOURCES]
@@ -187,7 +186,7 @@ async def main():
     
     check_list = list(candidates)
     random.shuffle(check_list)
-    check_list = check_list[:2000] # Sample 2000
+    check_list = check_list[:2000] 
     
     sem = asyncio.Semaphore(20)
     tasks = []
