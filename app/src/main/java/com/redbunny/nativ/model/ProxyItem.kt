@@ -6,14 +6,16 @@ data class ProxyItem(
     var country: String = "Unknown",
     var provider: String = "Unknown",
     var type: ProxyType = ProxyType.UNKNOWN,
-    var uuid: String = "", // Untuk VLESS/Trojan/VMess
-    var originalHost: String = "", // Host asli dari config, bukan IP
+    var uuid: String = "",
+    var originalHost: String = "",
+    var aid: Int = 0, // Alter ID for VMess
+    var path: String = "", // WebSocket/HTTP Path
     
     // Status Pengecekan
-    var latency: Long = -1, // -1 berarti belum dicek atau timeout
-    var isWorking: Boolean = false, // Apakah bisa connect
-    var isChecking: Boolean = false, // Sedang proses cek?
-    var speedtestAccess: Boolean = false // Spesifik bisa buka speedtest.net
+    var latency: Long = -1,
+    var isWorking: Boolean = false,
+    var isChecking: Boolean = false,
+    var speedtestAccess: Boolean = false
 )
 
 enum class ProxyType {

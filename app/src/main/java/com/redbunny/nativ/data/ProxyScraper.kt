@@ -8,12 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
-import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 import java.net.URLDecoder
+import java.util.concurrent.TimeUnit
 
 object ProxyScraper {
     private val client = OkHttpClient.Builder()
@@ -36,7 +35,6 @@ object ProxyScraper {
             }
         }
         val results = deferreds.awaitAll()
-        // Distinct by IP:Port to avoid duplicates
         return@withContext results.flatten().distinctBy { "${it.ip}:${it.port}" }
     }
 
@@ -65,7 +63,7 @@ object ProxyScraper {
                     if (encodedContent.isNotEmpty()) {
                         content = String(Base64.decode(encodedContent, Base64.DEFAULT))
                     }
-                } catch (e: Exception) { }
+                } catch (e: Exception) { } 
             } else if (isBase64(content.trim())) {
                 content = decodeBase64(content.trim())
             }
@@ -90,7 +88,7 @@ object ProxyScraper {
             if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://")) {
                 parseVlessTrojan(trimmed)?.let { items.add(it) }
             } else if (trimmed.startsWith("vmess://")) {
-                // VMess parsing if needed, currently skipping for simplicity or add logic
+                parseVmess(trimmed)?.let { items.add(it) }
             }
         }
         return items
@@ -98,7 +96,6 @@ object ProxyScraper {
 
     private fun parseVlessTrojan(uri: String): ProxyItem? {
         try {
-            // vless://uuid@ip:port?params#name
             val type = if (uri.startsWith("vless")) ProxyType.VLESS else ProxyType.TROJAN
             
             val main = uri.substringAfter("://")
@@ -124,40 +121,33 @@ object ProxyScraper {
             val ip = addressPart.substringBeforeLast(":")
             val port = addressPart.substringAfterLast(":").toIntOrNull() ?: 443
             
-            // Parse Query Params for Host/SNI
-            var originalHost = ""
-            if (paramsPart.isNotEmpty()) {
-                val pairs = paramsPart.split("&")
-                for (pair in pairs) {
-                    val kv = pair.split("=")
-                    if (kv.size == 2) {
-                        val key = kv[0]
-                        val value = URLDecoder.decode(kv[1], "UTF-8")
-                        if (key == "host" || key == "sni") {
-                            originalHost = value // Prioritize host/sni found in params
-                        }
-                    }
-                }
+            // Parse Query Params for Host/SNI/Path
+            var originalHost = ip // Default ke IP
+            var path = "/"
+            
+            val params = URLDecoder.decode(paramsPart, "UTF-8").split("&").associate {
+                val (key, value) = it.split("=", limit = 2)
+                key to value
+            }
+
+            if (params.containsKey("host") && params["host"]!!.isNotEmpty()) {
+                originalHost = params["host"]!!
+            } else if (params.containsKey("sni") && params["sni"]!!.isNotEmpty()) {
+                originalHost = params["sni"]!!
+            }
+            if (params.containsKey("path") && params["path"]!!.isNotEmpty()) {
+                path = params["path"]!!
             }
             
-            // If no host in params, use IP/Domain from address
-            if (originalHost.isEmpty()) originalHost = ip
-            
             // Parse Name for Country/ISP
-            var country = "Unknown"
-            var provider = "Public"
+            var country = "UN"
+            var provider = "Unknown"
             
             if (name.isNotEmpty()) {
                 val decodedName = URLDecoder.decode(name, "UTF-8")
-                // Format: #ID Telkomsel [IP]
-                // Try to extract if matches our aggregator format
-                if (decodedName.contains(" ")) {
-                    val parts = decodedName.split(" ")
-                    if (parts.isNotEmpty()) country = parts[0]
-                    if (parts.size > 1) provider = parts.subList(1, parts.size).joinToString(" ")
-                } else {
-                    provider = decodedName
-                }
+                val parts = decodedName.split(" ", limit = 2)
+                if (parts.isNotEmpty()) country = parts[0]
+                if (parts.size > 1) provider = parts[1]
             }
 
             return ProxyItem(
@@ -167,7 +157,53 @@ object ProxyScraper {
                 provider = provider,
                 type = type,
                 uuid = uuid,
-                originalHost = originalHost
+                originalHost = originalHost,
+                path = path // Set path
+            )
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    private fun parseVmess(uri: String): ProxyItem? {
+        try {
+            val b64 = uri.replace("vmess://", "")
+            val decodedJson = String(Base64.decode(b64, Base64.DEFAULT))
+            val jsonObject = JSONObject(decodedJson)
+
+            val ip = jsonObject.optString("add")
+            val port = jsonObject.optInt("port")
+            val id = jsonObject.optString("id")
+            val net = jsonObject.optString("net")
+            val host = jsonObject.optString("host")
+            val path = jsonObject.optString("path")
+            val tls = jsonObject.optString("tls")
+            val sni = jsonObject.optString("sni")
+            val aid = jsonObject.optInt("aid", 0)
+
+            var originalHost = host
+            if (originalHost.isEmpty()) originalHost = sni
+            if (originalHost.isEmpty()) originalHost = ip
+
+            var country = "UN"
+            var provider = "Unknown"
+            val ps = jsonObject.optString("ps")
+            if (ps.isNotEmpty()) {
+                val parts = ps.split(" ", limit = 2)
+                if (parts.isNotEmpty()) country = parts[0]
+                if (parts.size > 1) provider = parts[1]
+            }
+
+            return ProxyItem(
+                ip = ip,
+                port = port,
+                country = country,
+                provider = provider,
+                type = ProxyType.VMESS,
+                uuid = id,
+                originalHost = originalHost,
+                aid = aid, // Set aid
+                path = path // Set path
             )
         } catch (e: Exception) {
             return null

@@ -3,40 +3,66 @@ package com.redbunny.nativ.data
 import com.redbunny.nativ.model.ProxyItem
 import com.redbunny.nativ.model.ProxyType
 import java.net.URLEncoder
+import java.util.Base64 // Import the correct Base64
+import org.json.JSONObject // Import JSONObject
 
 object ConfigGenerator {
 
     data class ConfigOptions(
-        val frontDomain: String = "media-sin6-3.cdn.whatsapp.net", // Default Bug
-        val sni: String = "" // Tidak dipakai langsung, kita generate format Onering
+        val bugHost: String = "media-sin6-3.cdn.whatsapp.net", // Default Bug Host
+        val sniHeader: String = "" // Untuk Custom SNI, jika tidak kosong akan pakai ini
     )
 
     fun generateVless(proxy: ProxyItem, options: ConfigOptions): String {
-        // Format Onering SNI: onering:SERVER_HOST:BUG_HOST
-        // Host asli proxy (IP atau Domain)
-        val serverHost = proxy.ip 
-        val oneringSni = "onering:$serverHost:${options.frontDomain}"
-        
+        val serverHost = if (proxy.originalHost.isNotEmpty()) proxy.originalHost else proxy.ip 
+        val finalSni = if (options.sniHeader.isNotEmpty()) options.sniHeader else "onering:$serverHost:${options.bugHost}"
         val tag = "${proxy.country} ${proxy.provider}"
-        
-        // Standard VLESS WS TLS format dengan SNI Onering
-        return "vless://${proxy.uuid}@${proxy.ip}:${proxy.port}?type=ws&encryption=none&security=tls&sni=$oneringSni&host=$serverHost&path=%2F#${encode(tag)}"
+        val path = if (proxy.path.isNotEmpty()) proxy.path else "/" // Gunakan path asli jika ada, default ke /
+
+        return "vless://${proxy.uuid}@${proxy.ip}:${proxy.port}" +
+               "?type=ws&encryption=none&security=tls" +
+               "&sni=${encode(finalSni)}" +
+               "&host=${encode(serverHost)}" +
+               "&path=${encode(path)}" + 
+               "#${encode(tag)}"
     }
 
     fun generateTrojan(proxy: ProxyItem, options: ConfigOptions): String {
-        val serverHost = proxy.ip
-        val oneringSni = "onering:$serverHost:${options.frontDomain}"
+        val serverHost = if (proxy.originalHost.isNotEmpty()) proxy.originalHost else proxy.ip
+        val finalSni = if (options.sniHeader.isNotEmpty()) options.sniHeader else "onering:$serverHost:${options.bugHost}"
         val tag = "${proxy.country} ${proxy.provider}"
+        val path = if (proxy.path.isNotEmpty()) proxy.path else "/" // Gunakan path asli jika ada, default ke /
 
-        return "trojan://${proxy.uuid}@${proxy.ip}:${proxy.port}?type=ws&security=tls&sni=$oneringSni&host=$serverHost&path=%2F#${encode(tag)}"
+        return "trojan://${proxy.uuid}@${proxy.ip}:${proxy.port}" +
+               "?type=ws&security=tls" +
+               "&sni=${encode(finalSni)}" +
+               "&host=${encode(serverHost)}" +
+               "&path=${encode(path)}" +
+               "#${encode(tag)}"
     }
     
     fun generateVmess(proxy: ProxyItem, options: ConfigOptions): String {
-        // VMess butuh JSON construction
-        // Maaf, untuk VMess agak kompleks di Kotlin tanpa library JSON full, 
-        // tapi kita bisa construct string JSON manual atau skip dulu.
-        // Fokus VLESS/Trojan dulu sesuai request utama.
-        return ""
+        val serverHost = if (proxy.originalHost.isNotEmpty()) proxy.originalHost else proxy.ip
+        val finalSni = if (options.sniHeader.isNotEmpty()) options.sniHeader else "onering:$serverHost:${options.bugHost}"
+        val tag = "${proxy.country} ${proxy.provider}"
+        val path = if (proxy.path.isNotEmpty()) proxy.path else "/"
+
+        val vmessJson = JSONObject().apply {
+            put("v", "2")
+            put("ps", tag)
+            put("add", proxy.ip)
+            put("port", proxy.port)
+            put("id", proxy.uuid)
+            put("aid", proxy.aid) // Alter ID
+            put("net", "ws") // Asumsi WebSocket, bisa diubah jika perlu
+            put("type", "none")
+            put("host", serverHost)
+            put("path", path)
+            put("tls", "tls")
+            put("sni", finalSni)
+        }.toString()
+        
+        return "vmess://" + Base64.getEncoder().encodeToString(vmessJson.toByteArray())
     }
 
     private fun encode(s: String): String {
