@@ -111,12 +111,27 @@ object ProxyScraper {
 
     private fun parseContentGlobal(content: String): List<ProxyItem> {
         val items = mutableListOf<ProxyItem>()
-        val matches = GLOBAL_REGEX.findAll(content)
-        for (match in matches) {
-            val (ip, portStr) = match.destructured
-            val port = portStr.toIntOrNull()
-            if (port != null && port <= 65535 && isValidIp(ip)) {
-                items.add(ProxyItem(ip, port, "Unknown", "Public", ProxyType.UNKNOWN))
+        val lines = content.split("\n", "\r")
+        
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) continue
+            
+            // Format sederhana: IP:Port
+            // Kita cari titik dua terakhir untuk memisahkan IP dan Port
+            val lastColon = trimmed.lastIndexOf(':')
+            if (lastColon != -1 && lastColon < trimmed.length - 1) {
+                val ipPart = trimmed.substring(0, lastColon).trim()
+                val portPart = trimmed.substring(lastColon + 1).trim()
+                
+                // Validasi Port angka
+                val port = portPart.toIntOrNull()
+                if (port != null && port in 1..65535) {
+                    // Validasi IP sederhana (harus ada titik)
+                    if (ipPart.contains(".")) {
+                         items.add(ProxyItem(ipPart, port, "Unknown", "Public", ProxyType.UNKNOWN))
+                    }
+                }
             }
         }
         return items
